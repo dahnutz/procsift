@@ -15,7 +15,7 @@ Copyright © 2026 Daniel Hanganu. [MIT licensed](LICENSE).
 For Linux x86-64, download the executable directly once this repository is published:
 
 ```sh
-wget -q https://raw.githubusercontent.com/dahnutz/procsift/main/bin/procsift
+wget -O procsift https://github.com/dahnutz/procsift/raw/refs/heads/main/bin/procsift
 chmod +x procsift
 sudo ./procsift
 ```
