@@ -28,3 +28,16 @@ func TestDecodeIPv6Loopback(t *testing.T) {
 		t.Fatalf("local %q", rows[0].Local)
 	}
 }
+
+func TestParsePacket(t *testing.T) {
+	text := "sk RefCnt Type Proto Iface R Rmem User Inode\n" +
+		"0000000000000000 3 3 0003 2 1 0 1000 4242\n" +
+		"broken row\n"
+	rows, malformed := ParsePacket(text)
+	if malformed != 1 {
+		t.Fatalf("malformed rows %d", malformed)
+	}
+	if len(rows) != 1 || rows[0].Inode != 4242 || rows[0].UID != 1000 || rows[0].Proto != "packet" || rows[0].Local != "iface=2" || rows[0].State != "type=3 protocol=0x0003" {
+		t.Fatalf("rows %+v", rows)
+	}
+}

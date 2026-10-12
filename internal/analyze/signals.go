@@ -9,11 +9,14 @@ import (
 
 func hostFindings(s *model.Snapshot) []model.Finding {
 	var out []model.Finding
-	if len(s.PreloadPaths) > 0 {
+	if len(s.PreloadPaths) > 0 || s.PreloadTruncated {
 		ev := append([]string(nil), s.PreloadPaths...)
+		if s.PreloadTruncated {
+			ev = append(ev, "ld.so.preload exceeds the 4 KiB read limit; remaining entries were not inspected")
+		}
 		out = append(out, model.Finding{
-			Rule: "HOST-LD-PRELOAD", Severity: model.SevLow, Category: "process",
-			Summary:  "ld.so.preload names one or more libraries",
+			Rule: "HOST-LD-PRELOAD", Severity: model.SevMedium, Category: "process",
+			Summary:  "ld.so.preload contains entries or exceeds the read limit",
 			Detail:   "The file was read only to list paths, at most 4 KiB. A preload path is an observation. This is separate from LD_PRELOAD in a process environment.",
 			Evidence: ev,
 		})
@@ -123,12 +126,12 @@ func unownedLibFinding(p *model.Process) []model.Finding {
 func namespaceFindings(p *model.Process) []model.Finding {
 	var out []model.Finding
 	switch p.NetNSView {
-	case "changed", "denied", "missing":
+	case "changed", "foreign", "denied", "missing", "truncated":
 		out = append(out, model.Finding{
 			Rule: "PROC-NETNS", Severity: model.SevLow, Category: "network",
 			PID: p.PID, Process: p.Name,
 			Summary:  "process network namespace is " + p.NetNSView,
-			Detail:   "same means the namespace link matched pid 1. missing and denied are coverage gaps. changed means the namespace socket table had an inode that was not in the root table. No endpoint was contacted.",
+			Detail:   "same means the namespace link matched the scanner. foreign means it differed but no extra TCP inode was seen. missing, denied, and truncated are coverage gaps. changed means the namespace socket table had an inode absent from the scanner table. No endpoint was contacted.",
 			Evidence: []string{"state " + p.NetNSView},
 		})
 	}
@@ -156,8 +159,8 @@ func pageFindings(p *model.Process) []model.Finding {
 	return []model.Finding{{
 		Rule: "MEM-PAGE-MISMATCH", Severity: model.SevMedium, Category: "memory",
 		PID: p.PID, Process: p.Name,
-		Summary:  "executable page bytes differ from the backing file",
-		Detail:   "This check runs only with -deep. JIT, debuggers, and language runtimes can produce a difference. The compared bytes are not stored and were not executed.",
+		Summary:  "the first 16 bytes of an executable mapping differ from its backing file",
+		Detail:   "This check runs only with -deep and does not inspect later bytes where a hook may sit. JIT, debuggers, and runtimes can also produce a difference. Compared bytes are not stored or executed.",
 		Evidence: append([]string(nil), p.PageDiffs...),
 	}}
 }

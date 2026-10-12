@@ -53,7 +53,7 @@ func parseScan(args []string) (scanOpts, int, error) {
 	fs.BoolVar(&opt.quiet, "q", false, "suppress progress on stderr")
 	fs.BoolVar(&opt.json, "json", false, "shorthand for -format json")
 	fs.IntVar(&opt.onlyPID, "pid", 0, "narrow the process census to one pid and its parents; selected host checks still run")
-	fs.BoolVar(&opt.deep, "deep", false, "compare a few executable page headers with their files; off by default")
+	fs.BoolVar(&opt.deep, "deep", false, "compare the first 16 bytes of up to four executable mappings per selected process")
 	fs.StringVar(&opt.manifest, "manifest", "", "local md5sums reference for the paths it names; authenticity is not checked")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -178,7 +178,7 @@ Flags:
   -no-sweep             disable probing, even if -sweep was supplied
   -no-magic             do not read 16-byte executable headers
   -pid N                narrow process census to one PID and parents; host checks remain
-  -deep                 compare a few executable pages; off by default
+  -deep                 compare only the first 16 bytes of selected executable mappings
   -manifest path        local md5sums reference; not fetched over the network
   -q                    quiet progress
 
@@ -200,7 +200,7 @@ Exit status:
   2  the scan could not run
 
 diff exits 1 for new medium or high host findings or a changed image. One-snapshot
-processes and sockets are observations. Different hosts or boots return 2.
+processes and sockets are observations. Different hosts, boots, or scan scopes return 2.
 
 Run as root to read other users' file descriptors and executable headers.
 `, version)

@@ -1,5 +1,5 @@
 BINARY := bin/procsift
-VERSION := 0.5.1
+VERSION := 0.5.2
 RELEASE_GO_VERSION := go1.27.1
 
 .PHONY: build test test-live verify-binary release-check clean

@@ -1,8 +1,16 @@
 # ProcSift roadmap
 
-This file records shipped behavior and open work. Rule names identify observations; they do not label a process as malicious. The command was `ramtriage` through 0.4.0 and `procsift` from 0.5.0 onward.
+This file records implemented behavior and open work. Rule names identify observations; they do not label a process as malicious. The command was `ramtriage` through 0.4.0 and `procsift` from 0.5.0 onward.
 
 For usage, see [README.md](README.md) and [FIRST_SCAN.md](FIRST_SCAN.md). [PROPOSAL.md](PROPOSAL.md) describes the collection and report model.
+
+## 0.5.2 — collection and capture
+
+- Packet sockets are parsed from `/proc/net/packet`. A truncated `/proc` read keeps its complete prefix rows or fields and records the missing tail in coverage.
+- `ld.so.preload` is parsed using glibc's separators and comment syntax; listed entries or a truncated file produce a medium finding. Command-line redaction keeps bare `-p` ports visible and masks attached passwords, URL credentials, and authorization headers.
+- Shared-memory files are opened without following symlinks or blocking on FIFOs. Capture reads the target process's network namespace, checks the opened executable identity, discards failed partial copies, and orders descriptors numerically.
+- Reports record the scan options and supplied manifest hash. `diff` refuses mismatched scope, privilege, or severity, including older reports without scan options.
+- `-deep` still compares only the first 16 bytes of selected executable mappings. A wider page comparison needs a separate design and test fixtures.
 
 ## 0.5.1 — comparison and release checks
 
@@ -55,8 +63,31 @@ An hourly JSONL output and sample Wazuh configuration exist as a prototype. They
 
 Use the planned RPM test server to check database layouts, ownership, and file integrity against real packages. Keep reads bounded and report missing, denied, or unsupported RPM data as incomplete rather than clean. Add fixtures from the verified behavior before enabling RPM findings.
 
+### Visibility and first-run triage
+
+- Put scan visibility before the findings: scanner PID and mount, user, and network namespace identities; `/proc` mount restrictions such as `hidepid`; effective privileges; and counts of denied, truncated, and capped checks. State when the view is limited and recommend external or offline investigation when kernel concealment is plausible. The current report has EUID and individual coverage entries, but not this summary.
+- Compare `/proc` process and thread lists with bounded cgroup v2 `cgroup.procs` and `cgroup.threads` reads where PID namespaces align. Recheck discrepant IDs and start times before reporting them; record inaccessible cgroups, exits, PID reuse, and moves between cgroups. The optional PID sweep remains a separate view.
+- Add an optional, bounded lookback over existing journal or audit records for processes that exited before the scan. Report historical launches separately from live findings. Link a record to a live process only when boot, time, PID, and service evidence agree; missing or unreadable logs are a coverage limit, not evidence that nothing ran.
+- Spend the current mapped-library budget first on authentication and other critical daemons, then on processes already carrying independent findings. Check unit `ExecStart`, package ownership, and preload context alongside unexpected libraries; state which processes or mappings were skipped by the budget.
+- Compare `/proc/net` socket observations with bounded sock_diag queries in the same network namespace. Repeat discrepant reads to reduce churn noise and report namespace or permission limits. A disagreement is an investigation lead, not proof of a hidden socket.
+- Extend the existing process-disguise finding with unit `ExecStart`, package owner, parent identity, and kernel-thread status. Increase priority only when independent identity fields disagree; a familiar process name alone is insufficient.
+- Offer opt-in immediate preservation for selected high-priority live processes. Recheck PID, start time, and opened executable identity, cap copied bytes, and report failed or partial captures. Manual `capture -pid` remains available.
+- Pair detection fixtures with ordinary cases: hidden-PID discrepancies, preload libraries, memfd impersonation, exited processes, and socket-view differences alongside updates, Snap, containers, JIT runtimes, and legitimate BPF agents. Check first-page ranking and coverage behavior, not just whether a rule fires.
+
+### Broader first-run coverage
+
+- Inventory persistence independently of running processes: selected systemd units and timers, cron, SSH keys and configuration, PAM, loader configuration, udev rules, shell startup files, and setuid files. Keep path and read budgets explicit. Package ownership, changes, and timestamps provide context; none alone proves a backdoor.
+- Add Unix-domain sockets from `/proc/net/unix` and join their inodes to process descriptors. This would expose local listeners that the current IP and packet socket inventory misses.
+- Inventory loaded eBPF programs and links by ID, including programs without pins. Record program type, attachment, ownership when available, and permission or kernel limits. An unrecognized program is an investigation lead, not proof of a rootkit.
+- Read available tracefs or debugfs ftrace and kprobe registrations with bounded reads. Legitimate tracing and observability tools use these interfaces too; inaccessible views remain coverage limits.
+- Add host or fleet baselines for recurring scans. Exceptions should have a reason and expiry, and the original finding should remain visible in the report. Add container and pod identifiers to process findings where cgroup evidence supports them.
+
 ### Later
 
+- Provide direct downloads from tagged releases with SHA-256 sums and a verifiable signature.
+- Correlate visible login sessions with process ancestry when session records are available. Missing or stale `utmp` and `wtmp` data must not imply that nobody logged in.
+- Accept an offline, operator-supplied indicator list for hashes, paths, and addresses. Record the indicator source and hash scope; a match is a lead for investigation.
+- Report kernel lockdown and module-signature settings as host context. A change in kernel taint requires an earlier measurement; one scan can only show its current value.
 - Add an offline replay format for captured `/proc` evidence. JSON `diff` compares reports; it does not rerun the scanner against a captured tree.
 - Validate routine package updates and false-positive behavior on ordinary hosts before publishing performance or detection-rate claims.
 - Consider stronger correlation across several snapshots for short-lived processes and sockets. A two-report diff can show a change but cannot establish its cause.

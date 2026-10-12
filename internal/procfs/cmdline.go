@@ -2,8 +2,13 @@ package procfs
 
 import (
 	"bytes"
+	"path/filepath"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 )
+
+var urlCredentials = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://)[^\s/@]+:[^\s/@]+@`)
 
 // NormalizeCmdline turns a NUL-separated argument vector into a single line
 // and redacts values that look like tokens, passwords, or keys.
@@ -20,10 +25,26 @@ func RedactCmdline(s string) string {
 		return ""
 	}
 	parts := strings.Fields(s)
+	client := strings.ToLower(filepath.Base(parts[0]))
+	mysqlPassword := strings.HasPrefix(client, "mysql") || strings.HasPrefix(client, "mariadb")
 	for i := 0; i < len(parts); i++ {
 		p := parts[i]
+		if strings.HasPrefix(strings.ToLower(p), "authorization:") {
+			parts[i] = "Authorization:[redacted]"
+			// Quoting is lost after flattening. Keep this bounded so later
+			// endpoints remain visible.
+			for n := 0; n < 2 && i+1 < len(parts) && !strings.HasPrefix(parts[i+1], "-") && !strings.Contains(parts[i+1], "://"); n++ {
+				i++
+				parts[i] = "[redacted]"
+			}
+			continue
+		}
 		if eq := strings.IndexByte(p, '='); eq > 0 && sensitiveKey(p[:eq]) {
 			parts[i] = p[:eq+1] + "[redacted]"
+			continue
+		}
+		if strings.HasPrefix(p, "-p") && len(p) > 2 && (mysqlPassword || hasNonDigit(p[2:])) {
+			parts[i] = "-p[redacted]"
 			continue
 		}
 		if strings.HasPrefix(p, "-") && sensitiveKey(p) && i+1 < len(parts) && !strings.HasPrefix(parts[i+1], "-") {
@@ -31,7 +52,16 @@ func RedactCmdline(s string) string {
 			parts[i] = "[redacted]"
 		}
 	}
-	return strings.Join(parts, " ")
+	return urlCredentials.ReplaceAllString(strings.Join(parts, " "), "${1}[redacted]@")
+}
+
+func hasNonDigit(s string) bool {
+	for _, ch := range s {
+		if ch < '0' || ch > '9' {
+			return true
+		}
+	}
+	return false
 }
 
 func sensitiveKey(arg string) bool {
@@ -41,7 +71,7 @@ func sensitiveKey(arg string) bool {
 	}
 	a = strings.ReplaceAll(a, "_", "-")
 	switch a {
-	case "p", "password", "pass", "passwd", "token", "secret",
+	case "password", "pass", "passwd", "token", "secret",
 		"auth-token", "access-token", "api-key", "apikey",
 		"credential", "credentials", "private-key", "session",
 		"session-token", "bearer", "authorization":
@@ -78,11 +108,20 @@ func InterestingEnv(b []byte) (preload, audit, library string) {
 
 // Truncate shortens s to at most n bytes, appending an ellipsis when it cuts.
 func Truncate(s string, n int) string {
+	s = strings.ToValidUTF8(s, "�")
 	if n <= 0 || len(s) <= n {
 		return s
 	}
 	if n < 3 {
-		return s[:n]
+		cut := n
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		return s[:cut]
 	}
-	return s[:n-3] + "..."
+	cut := n - 3
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
 }

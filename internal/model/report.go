@@ -10,6 +10,7 @@ type Report struct {
 	Tool           string        `json:"tool"`
 	Version        string        `json:"version"`
 	MinSeverity    string        `json:"min_severity"`
+	ScanOptions    *ScanOptions  `json:"scan_options,omitempty"`
 	HostResult     string        `json:"host_result"`
 	HostExitReason string        `json:"host_exit_reason"`
 	HostSignals    HostSignals   `json:"host_signals"`
@@ -31,6 +32,20 @@ type Report struct {
 	Limits         []string      `json:"limits"`
 	Coverage       []ReadIssue   `json:"coverage"`
 	ShowProcesses  bool          `json:"-"`
+}
+
+// ScanOptions records inputs that change what a scan can observe.
+type ScanOptions struct {
+	PID            int    `json:"pid"`
+	All            bool   `json:"all"`
+	Deep           bool   `json:"deep"`
+	ReadMagic      bool   `json:"read_magic"`
+	Manifest       string `json:"manifest,omitempty"`
+	ManifestSHA256 string `json:"manifest_sha256,omitempty"`
+	Sweep          bool   `json:"sweep"`
+	PIDMax         int    `json:"pid_max"`
+	SweepMaxProbes int    `json:"sweep_max_probes,omitempty"`
+	SweepTimeout   string `json:"sweep_timeout,omitempty"`
 }
 
 // HostInfo describes the machine the snapshot was taken on.

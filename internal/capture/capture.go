@@ -12,7 +12,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/dahnutz/procsift/internal/procfs"
@@ -76,7 +78,7 @@ func Run(opt Options) error {
 		opt.MaxBytes = DefaultMaxBytes
 	}
 	if opt.Version == "" {
-		opt.Version = "0.4.0"
+		return fmt.Errorf("capture version is required")
 	}
 	if _, err := os.Lstat(opt.OutDir); err == nil {
 		return fmt.Errorf("refuse existing path %s", opt.OutDir)
@@ -114,17 +116,18 @@ func Run(opt Options) error {
 	if cmd, err := os.ReadFile(filepath.Join(base, "cmdline")); err == nil {
 		man.Cmdline = procfs.NormalizeCmdline(cmd)
 	}
-	beforeDev, beforeIno, beforeSize := statExe(filepath.Join(base, "exe"))
-	hash, imageName, fail := copyImage(filepath.Join(base, "exe"), filepath.Join(opt.OutDir, "image.bin"), opt.MaxBytes, beforeSize)
+	hash, imageName, fail, openedID := copyImage(filepath.Join(base, "exe"), filepath.Join(opt.OutDir, "image.bin"), opt.MaxBytes)
 	if fail != "" {
 		man.Failures = append(man.Failures, fail)
 	}
 	afterTicks, afterDev, afterIno, afterPID, afterOK := recheck(base)
-	stable := afterOK && afterPID == man.PID && afterTicks == man.StartTicks && afterDev == beforeDev && afterIno == beforeIno && beforeDev != 0
+	stable := afterOK && afterPID == man.PID && afterTicks == man.StartTicks && afterDev == openedID.dev && afterIno == openedID.ino && openedID.dev != 0
 	man.IdentityStable = stable
-	if imageName != "" && !stable {
+	if imageName != "" && (!stable || hash == nil) {
 		_ = os.Remove(filepath.Join(opt.OutDir, imageName))
-		man.Failures = append(man.Failures, "process identity changed during the read; image discarded")
+		if !stable {
+			man.Failures = append(man.Failures, "process identity changed during the read; image discarded")
+		}
 		hash = nil
 	}
 	if hash != nil {
@@ -147,7 +150,7 @@ func Run(opt Options) error {
 	} else {
 		man.Failures = append(man.Failures, "maps: "+err.Error())
 	}
-	man.Descriptors, man.Sockets = readFDs(filepath.Join(base, "fd"), opt.ProcRoot)
+	man.Descriptors, man.Sockets = readFDs(filepath.Join(base, "fd"), base)
 	man.DurationMS = time.Since(started).Milliseconds()
 	body, err := json.MarshalIndent(man, "", "  ")
 	if err != nil {
@@ -160,21 +163,30 @@ func Run(opt Options) error {
 	return nil
 }
 
-func copyImage(src, dst string, max, size int64) (*Hash, string, string) {
-	in, err := os.Open(src)
+func copyImage(src, dst string, max int64) (*Hash, string, string, fileID) {
+	in, err := os.OpenFile(src, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return nil, "", "image: " + err.Error()
+		return nil, "", "image: " + err.Error(), fileID{}
 	}
 	defer in.Close()
+	info, err := in.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, "", "image: opened executable is not a regular file", fileID{}
+	}
+	openedID, ok := fileIDs(info)
+	if !ok {
+		return nil, "", "image: opened executable identity is unavailable", fileID{}
+	}
+	size := info.Size()
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return nil, "", "image create: " + err.Error()
+		return nil, "", "image create: " + err.Error(), openedID
 	}
 	defer out.Close()
 	h := sha256.New()
 	n, err := io.Copy(out, io.TeeReader(io.LimitReader(in, max), h))
 	if err != nil {
-		return nil, "image.bin", "image read: " + err.Error()
+		return nil, "image.bin", "image read: " + err.Error(), openedID
 	}
 	scope := "prefix"
 	if n == size && n <= max {
@@ -188,7 +200,7 @@ func copyImage(src, dst string, max, size int64) (*Hash, string, string) {
 		}
 	}
 	if err := out.Sync(); err != nil {
-		return nil, "image.bin", "image sync: " + err.Error()
+		return nil, "image.bin", "image sync: " + err.Error(), openedID
 	}
 	return &Hash{
 		Algorithm: "sha256",
@@ -196,7 +208,7 @@ func copyImage(src, dst string, max, size int64) (*Hash, string, string) {
 		Bytes:     n,
 		Size:      size,
 		Digest:    hex.EncodeToString(h.Sum(nil)),
-	}, "image.bin", ""
+	}, "image.bin", "", openedID
 }
 
 func readFDs(dir, proc string) (fds, sockets []string) {
@@ -204,6 +216,14 @@ func readFDs(dir, proc string) (fds, sockets []string) {
 	if err != nil {
 		return []string{"fd: " + err.Error()}, nil
 	}
+	sort.Slice(entries, func(i, j int) bool {
+		a, ae := strconv.Atoi(entries[i].Name())
+		b, be := strconv.Atoi(entries[j].Name())
+		if ae == nil && be == nil {
+			return a < b
+		}
+		return entries[i].Name() < entries[j].Name()
+	})
 	if len(entries) > 64 {
 		entries = entries[:64]
 		fds = append(fds, "descriptor list truncated at 64")

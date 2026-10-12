@@ -3,6 +3,7 @@
 package collect
 
 import (
+	"bytes"
 	"errors"
 	"os"
 
@@ -10,6 +11,23 @@ import (
 )
 
 var errTruncated = errors.New("read exceeded the collection limit")
+
+func usablePrefix(err error) bool { return err == nil || errors.Is(err, errTruncated) }
+
+// A capped read can end in the middle of a record. Keep only complete records.
+func completeLines(b []byte) []byte {
+	if i := bytes.LastIndexByte(b, '\n'); i >= 0 {
+		return b[:i+1]
+	}
+	return nil
+}
+
+func completeNUL(b []byte) []byte {
+	if i := bytes.LastIndexByte(b, 0); i >= 0 {
+		return b[:i+1]
+	}
+	return nil
+}
 
 func readState(err error) string {
 	switch {

@@ -90,7 +90,7 @@ sudo ./bin/procsift -json -o /var/tmp/procsift-case/second.json
 sudo ./bin/procsift diff -old /var/tmp/procsift-case/first.json -new /var/tmp/procsift-case/second.json
 ```
 
-`diff` accepts reports from the same host and boot. It excludes the scanner's own process and reports one-snapshot process and socket changes as observations. A new medium or high finding is host evidence; different hosts or boots return `2`. The output describes changed evidence, not its cause.
+`diff` accepts reports from the same host and boot when privileges, scan options, manifest contents, and minimum severity match. It excludes the scanner's own process and reports one-snapshot process and socket changes as observations. A new medium or high finding is host evidence. Different hosts, boots, or scan settings return `2`. Reports without recorded scan options cannot be compared. The output describes changed evidence, not its cause.
 
 A bounded PID sweep is optional. It probes PID numbers but cannot prove that a rootkit is absent:
 
@@ -98,7 +98,7 @@ A bounded PID sweep is optional. It probes PID numbers but cannot prove that a r
 sudo ./bin/procsift -sweep -sweep-max-probes 32768 -sweep-timeout 3s
 ```
 
-Use `-deep` only when you need its extra comparison. It reads short headers from a few executable pages and their backing files; ordinary runtimes and debuggers can differ. The normal scan leaves it off.
+Use `-deep` only when you need its extra comparison. It checks the first 16 bytes of a few executable mappings against their backing files; it cannot find patches farther into a function. Ordinary runtimes and debuggers can differ. The normal scan leaves it off.
 
 ## 7. Compare process identity
 

@@ -11,6 +11,7 @@ import (
 type Options struct {
 	Version          string
 	MinSeverity      string
+	ScanOptions      *model.ScanOptions
 	FailOn           string
 	FailOnSelf       bool
 	IncludeProcesses bool
@@ -20,7 +21,7 @@ type Options struct {
 // Build assembles the operator-facing report from a snapshot and findings.
 func Build(snap *model.Snapshot, findings []model.Finding, opt Options) model.Report {
 	if opt.Version == "" {
-		opt.Version = "0.5.1"
+		opt.Version = "0.5.2"
 	}
 	if opt.MinSeverity == "" {
 		opt.MinSeverity = model.SevLow
@@ -38,6 +39,7 @@ func Build(snap *model.Snapshot, findings []model.Finding, opt Options) model.Re
 		Coverage:      append([]model.ReadIssue(nil), snap.Coverage...),
 		FileChecks:    append([]model.FileCheck(nil), snap.FileChecks...),
 		MinSeverity:   opt.MinSeverity,
+		ScanOptions:   opt.ScanOptions,
 		ShowProcesses: opt.IncludeProcesses,
 	}
 	if snap != nil {

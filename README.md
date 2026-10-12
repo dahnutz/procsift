@@ -6,13 +6,13 @@ ProcSift is a standalone utility for live Linux incident triage. It reads proces
 
 It is a first pass, not a compromise verdict. It does not acquire physical RAM, run recovered files, contact observed network endpoints, or fix the host. A rootkit that controls the kernel views it reads can still hide from it.
 
-ProcSift was called `ramtriage` through version 0.4.0. Version 0.5.0 introduced the `procsift` command and report name; 0.5.1 hardens comparison and release checks. There is no old-name compatibility command.
+ProcSift was called `ramtriage` through version 0.4.0. The command and report name have been `procsift` since 0.5.0.
 
 Copyright © 2026 Daniel Hanganu. [MIT licensed](LICENSE).
 
 ## Download and run
 
-For Linux x86-64, download the executable directly once this repository is published:
+For a live scan on Linux x86-64, download the executable directly:
 
 ```sh
 wget -O procsift https://github.com/dahnutz/procsift/raw/refs/heads/main/bin/procsift
@@ -46,7 +46,7 @@ For the commands, a walkthrough, and examples of what to do with a finding, see 
 - **Explanations:** Package-update evidence and observed Snap mounts appear alongside the original finding. A local package database is a reference, not independent proof of file integrity.
 - **Coverage and limits:** Denied, truncated, and unavailable reads are recorded. An incomplete check does not become a clean result.
 
-The default scan is bounded and does not probe every possible PID. It reads a small header from selected executable mappings; `-no-magic` disables that read. The optional `-deep` comparison reads a few executable page headers and is off by default. The optional `-sweep` probes PID numbers with `kill(pid, 0)` within a time and count limit.
+The default scan is bounded and does not probe every possible PID. It reads a small header from selected executable mappings; `-no-magic` disables that read. The optional `-deep` comparison checks only the first 16 bytes of a few executable mappings and is off by default. The optional `-sweep` probes PID numbers with `kill(pid, 0)` within a time and count limit.
 
 ## Commands you will use most
 
@@ -69,7 +69,7 @@ sudo ./bin/procsift diff -old /tmp/procsift-first.json -new /tmp/procsift-second
 
 `-pid` narrows the process census. It still performs selected host-level file checks and socket reads; it is not a strict single-process scan. `capture` creates a new local directory and copies evidence from the selected process. It never executes that copy. An existing destination is rejected.
 
-`diff` compares reports from the same host and boot. Scanner-created processes are excluded; one-snapshot processes and sockets are shown as observations. A new medium or high finding counts as host evidence. Different boots or hosts return exit code `2`. The command reports differences between snapshots; it does not determine why they occurred.
+`diff` compares reports from the same host and boot with the same privileges, scan options, manifest contents, and minimum severity. Scanner-created processes are excluded; one-snapshot processes and sockets are shown as observations. A new medium or high finding counts as host evidence. Different boots, hosts, or scan settings return exit code `2`. Reports without recorded scan options cannot be compared. The command reports differences between snapshots; it does not determine why they occurred.
 
 | Scan exit code | Meaning |
 | --- | --- |
@@ -97,10 +97,10 @@ The report may also show high findings for ProcSift itself when it was launched 
 
 ## Scope and privacy
 
-ProcSift inventories processes, threads, mapped files, anonymous executable memory, shared memory, kernel modules, sockets, selected startup files, and package context. The `-deep` option can compare short executable page headers with their backing files. The scanner does not dump a process's memory. `capture -pid` can copy the selected process's **open executable** into a private local bundle, with a manifest that says whether the copy is complete or capped.
+ProcSift inventories processes, threads, mapped files, anonymous executable memory, shared memory, kernel modules, sockets, selected startup files, and package context. The `-deep` option compares only the first 16 bytes of selected executable mappings with their backing files; it does not inspect later function patches. The scanner does not dump a process's memory. `capture -pid` can copy the selected process's **open executable** into a private local bundle, with a manifest that says whether the copy is complete or capped.
 
 Reports can contain usernames, paths, command lines, and network addresses. Arguments that look like passwords, tokens, or keys are redacted. Redaction is best-effort; report files use mode `0600` when written with `-o`.
 
-The local dpkg database is used as a reference, not as a trusted clean baseline. A Snap squashfs mount explains why dpkg may not list a process; it does not verify that Snap image. RPM ownership is not parsed in 0.5.1. A supplied `-manifest` file is another local reference, not a signed or independently authenticated source.
+The local dpkg database is used as a reference, not as a trusted clean baseline. A Snap squashfs mount explains why dpkg may not list a process; it does not verify that Snap image. RPM ownership is not parsed. A supplied `-manifest` file is another local reference, not a signed or independently authenticated source.
 
-For all flags, run `./bin/procsift help`. [ROADMAP.md](ROADMAP.md) records shipped behavior and known limits; [PROPOSAL.md](PROPOSAL.md) explains the design.
+For all flags, run `./bin/procsift help`. [ROADMAP.md](ROADMAP.md) records implemented behavior and open work; [PROPOSAL.md](PROPOSAL.md) explains the design.

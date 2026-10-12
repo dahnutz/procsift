@@ -2,6 +2,7 @@ package procfs
 
 import (
 	"encoding/hex"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -22,6 +23,38 @@ var protoStates = map[int]string{
 	9:  "LAST_ACK",
 	10: "LISTEN",
 	11: "CLOSING",
+}
+
+// ParsePacket reads /proc/net/packet, whose columns differ from TCP and raw.
+// It also counts rows that cannot be parsed so the collector can report gaps.
+func ParsePacket(text string) ([]model.Socket, int) {
+	var out []model.Socket
+	malformed := 0
+	for _, line := range strings.Split(text, "\n") {
+		f := strings.Fields(line)
+		if len(f) == 0 || f[0] == "sk" {
+			continue
+		}
+		if len(f) < 9 {
+			malformed++
+			continue
+		}
+		kind, e1 := strconv.Atoi(f[2])
+		protocol, e2 := strconv.ParseUint(f[3], 16, 16)
+		iface, e3 := strconv.Atoi(f[4])
+		uid, e4 := strconv.Atoi(f[7])
+		inode, e5 := strconv.ParseUint(f[8], 10, 64)
+		if e1 != nil || e2 != nil || e3 != nil || e4 != nil || e5 != nil {
+			malformed++
+			continue
+		}
+		out = append(out, model.Socket{
+			Proto: "packet", Local: fmt.Sprintf("iface=%d", iface),
+			State: fmt.Sprintf("type=%d protocol=0x%04x", kind, protocol),
+			UID:   uid, Inode: inode,
+		})
+	}
+	return out, malformed
 }
 
 // ParseNet reads /proc/net/tcp, tcp6, udp, or udp6. proto is stored on each row.

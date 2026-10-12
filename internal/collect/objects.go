@@ -4,9 +4,12 @@ package collect
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"syscall"
 
 	"github.com/dahnutz/procsift/internal/model"
 	"github.com/dahnutz/procsift/internal/procfs"
@@ -27,7 +30,8 @@ func (c *collector) loadObjects() {
 	} else {
 		c.snap.Notes = append(c.snap.Notes, "System V shared-memory table was not readable.")
 	}
-	files, err := readDevShm(c.devshm)
+	files, issues, err := readDevShm(c.devshm)
+	c.snap.Coverage = append(c.snap.Coverage, issues...)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			c.snap.Limits = append(c.snap.Limits, "/dev/shm is not present, so POSIX shared-memory files were not inventoried.")
@@ -82,33 +86,60 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-func readDevShm(dir string) ([]model.DevShmFile, error) {
+func readDevShm(dir string) ([]model.DevShmFile, []model.ReadIssue, error) {
 	ents, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var out []model.DevShmFile
+	var issues []model.ReadIssue
 	for _, e := range ents {
+		path := filepath.Join(dir, e.Name())
 		info, err := e.Info()
-		if err != nil || !info.Mode().IsRegular() {
+		if err != nil {
+			issues = append(issues, model.ReadIssue{Source: path, State: readState(err), Detail: err.Error()})
 			continue
 		}
-		magic := ""
-		f, err := os.Open(filepath.Join(dir, e.Name()))
-		if err == nil {
-			buf := make([]byte, 4)
-			n, _ := f.Read(buf)
-			f.Close()
-			magic = procfs.ClassifyMagic(buf[:n])
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		opened, magic, err := inspectDevShm(path)
+		if err != nil {
+			issues = append(issues, model.ReadIssue{Source: path, State: readState(err), Detail: err.Error()})
+		}
+		if opened == nil {
+			continue
 		}
 		out = append(out, model.DevShmFile{
 			Name:       e.Name(),
-			Size:       info.Size(),
-			Executable: info.Mode().Perm()&0111 != 0,
+			Size:       opened.Size(),
+			Executable: opened.Mode().Perm()&0111 != 0,
 			Magic:      magic,
 		})
 	}
-	return out, nil
+	return out, issues, nil
+}
+
+func inspectDevShm(path string) (os.FileInfo, string, error) {
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, "", err
+	}
+	f := os.NewFile(uintptr(fd), path)
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, "", err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, "", fmt.Errorf("entry was not regular after opening")
+	}
+	buf := make([]byte, 4)
+	n, err := f.Read(buf)
+	if errors.Is(err, io.EOF) {
+		err = nil
+	}
+	return info, procfs.ClassifyMagic(buf[:n]), err
 }
 
 func (c *collector) readSockets() ([]model.Socket, bool) {
@@ -126,7 +157,10 @@ func (c *collector) readSockets() ([]model.Socket, bool) {
 		if err != nil {
 			c.issue(path, err)
 			complete = false
-			continue
+			if !errors.Is(err, errTruncated) {
+				continue
+			}
+			b = completeLines(b)
 		}
 		out = append(out, procfs.ParseNet(spec.proto, string(b))...)
 	}

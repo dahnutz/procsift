@@ -103,6 +103,40 @@ func TestOwnersIncludeOtherNamespaces(t *testing.T) {
 	}
 }
 
+func TestNamespaceLabelsUseScannerView(t *testing.T) {
+	c := networkFixture(t)
+	c.onlyPID = 42
+	for _, dir := range []string{"1/ns", "42/ns", "42/net"} {
+		if err := os.MkdirAll(filepath.Join(c.proc, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("net:[9]", filepath.Join(c.proc, "1/ns/net")); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(c.proc, "42/ns/net")
+	if err := os.Symlink("net:[1]", path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(c.proc, "42/net/tcp"), []byte("sl local_address rem_address st\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c.noteNamespaces()
+	if c.snap.Processes[0].NetNSView != "same" {
+		t.Fatalf("same view %q", c.snap.Processes[0].NetNSView)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("net:[2]", path); err != nil {
+		t.Fatal(err)
+	}
+	c.noteNamespaces()
+	if c.snap.Processes[0].NetNSView != "foreign" {
+		t.Fatalf("empty foreign view %q", c.snap.Processes[0].NetNSView)
+	}
+}
+
 func TestPIDCensusChange(t *testing.T) {
 	if samePIDSet(map[int]struct{}{1: {}}, map[int]struct{}{2: {}}) {
 		t.Fatal("changed PIDs accepted")

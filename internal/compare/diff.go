@@ -55,6 +55,30 @@ func Diff(older, newer model.Report) Result {
 		result.ScopeIssue = "reports name different hosts"
 		return result
 	}
+	if older.Host.EUID != newer.Host.EUID {
+		result.ScopeIssue = "reports were collected with different privileges"
+		return result
+	}
+	if older.ScanOptions == nil || newer.ScanOptions == nil {
+		result.ScopeIssue = "scan options are missing from one or both reports; rerun both scans with the current version"
+		return result
+	}
+	if older.MinSeverity == "" || older.MinSeverity != newer.MinSeverity {
+		result.ScopeIssue = "reports use different or unknown -min-severity settings"
+		return result
+	}
+	if older.ScanOptions.Manifest != "" && older.ScanOptions.ManifestSHA256 == "" || newer.ScanOptions.Manifest != "" && newer.ScanOptions.ManifestSHA256 == "" {
+		result.ScopeIssue = "the supplied manifest could not be identified in both reports"
+		return result
+	}
+	if *older.ScanOptions != *newer.ScanOptions {
+		result.ScopeIssue = "reports use different scan options"
+		return result
+	}
+	if older.ScanOptions.Sweep && older.Host.PIDMax != newer.Host.PIDMax {
+		result.ScopeIssue = "reports probed different PID spaces"
+		return result
+	}
 	result.ProcessChanges = diffProcesses(older, newer)
 	result.SocketChanges = diffSockets(older, newer)
 	result.FindingChanges = diffFindings(older, newer)

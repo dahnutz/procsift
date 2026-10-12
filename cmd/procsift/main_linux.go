@@ -3,6 +3,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
@@ -65,6 +66,15 @@ func runScan(args []string) int {
 	if !opt.quiet {
 		progress = os.Stderr
 	}
+	scope := &model.ScanOptions{
+		PID: opt.onlyPID, All: opt.all, Deep: opt.deep, ReadMagic: !opt.noMagic,
+		Manifest: opt.manifest, Sweep: opt.sweep && !opt.noSweep, PIDMax: opt.pidMax,
+	}
+	manifestBefore := manifestFingerprint(opt.manifest)
+	if scope.Sweep {
+		scope.SweepMaxProbes = opt.sweepMaxProbes
+		scope.SweepTimeout = opt.sweepTimeout.String()
+	}
 	snap, err := collect.Collect(collect.Options{
 		PIDMax:         opt.pidMax,
 		Sweep:          opt.sweep && !opt.noSweep,
@@ -80,11 +90,15 @@ func runScan(args []string) int {
 		fmt.Fprintf(os.Stderr, "procsift: %s\n", err)
 		return 2
 	}
+	if manifestBefore != "" && manifestBefore == manifestFingerprint(opt.manifest) {
+		scope.ManifestSHA256 = manifestBefore
+	}
 	findings := analyze.Analyze(snap)
 	shown := filter(findings, opt.minSeverity)
 	rep := report.Build(snap, shown, report.Options{
 		Version:          version,
 		MinSeverity:      opt.minSeverity,
+		ScanOptions:      scope,
 		FailOn:           opt.failOn,
 		FailOnSelf:       opt.failOnSelf,
 		IncludeProcesses: opt.all,
@@ -106,6 +120,28 @@ func runScan(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+func manifestFingerprint(path string) string {
+	if path == "" {
+		return ""
+	}
+	const maxBytes = 16 << 20
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxBytes {
+		return ""
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
+	if err != nil || len(b) > maxBytes {
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	return fmt.Sprintf("%x", sum)
 }
 
 func runCapture(args []string) int {
@@ -168,7 +204,7 @@ func runDiff(args []string) int {
 
 func readReport(path string) (model.Report, error) {
 	const maxReportBytes = 64 << 20
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return model.Report{}, err
 	}

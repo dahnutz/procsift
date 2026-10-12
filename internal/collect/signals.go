@@ -3,6 +3,7 @@
 package collect
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -22,24 +23,46 @@ func (c *collector) observeHost() {
 }
 
 func (c *collector) readPreload() {
-	b, err := readLimited(explainPath(c.hostRoot, "/etc/ld.so.preload"), 4096)
+	path := explainPath(c.hostRoot, "/etc/ld.so.preload")
+	b, err := readLimited(path, 4096)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			c.issue(explainPath(c.hostRoot, "/etc/ld.so.preload"), err)
+			c.issue(path, err)
 		}
-		return
+		if !errors.Is(err, errTruncated) {
+			return
+		}
 	}
-	for _, line := range strings.Split(string(b), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
+	if errors.Is(err, errTruncated) {
+		c.snap.PreloadTruncated = true
+		// A separator completes the preceding name even without a newline.
+		if i := strings.LastIndexAny(string(b), ": \t\n"); i >= 0 {
+			b = b[:i+1]
+		} else {
+			b = nil
 		}
+	}
+	for _, name := range parsePreloadPaths(string(b)) {
 		if len(c.snap.PreloadPaths) >= 16 {
 			c.snap.Limits = append(c.snap.Limits, "ld.so.preload listing stopped at 16 paths.")
 			break
 		}
-		c.snap.PreloadPaths = append(c.snap.PreloadPaths, line)
+		c.snap.PreloadPaths = append(c.snap.PreloadPaths, name)
 	}
+}
+
+func parsePreloadPaths(text string) []string {
+	var clean strings.Builder
+	for _, line := range strings.Split(text, "\n") {
+		if i := strings.IndexByte(line, '#'); i >= 0 {
+			line = line[:i]
+		}
+		clean.WriteString(line)
+		clean.WriteByte('\n')
+	}
+	return strings.FieldsFunc(clean.String(), func(r rune) bool {
+		return r == ':' || r == ' ' || r == '\t' || r == '\n'
+	})
 }
 
 func explainPath(root, abs string) string {
@@ -130,9 +153,21 @@ func (c *collector) readRawSockets() {
 		body, err := readLimited(path, 1<<20)
 		if err != nil {
 			c.issue(path, err)
-			continue
+			if !errors.Is(err, errTruncated) {
+				continue
+			}
+			body = completeLines(body)
 		}
-		rows := procfs.ParseNet(name, string(body))
+		var rows []model.Socket
+		if name == "packet" {
+			var malformed int
+			rows, malformed = procfs.ParsePacket(string(body))
+			if malformed > 0 {
+				c.snap.Coverage = append(c.snap.Coverage, model.ReadIssue{Source: path, State: "error", Detail: "packet socket table contained " + strconv.Itoa(malformed) + " unparsed rows"})
+			}
+		} else {
+			rows = procfs.ParseNet(name, string(body))
+		}
 		if len(c.snap.Sockets)+len(rows) > 8000 {
 			c.snap.Limits = append(c.snap.Limits, "Raw and packet socket reads stopped at the socket cap.")
 			break
@@ -171,6 +206,9 @@ func (c *collector) noteLateThreads() {
 			}
 			body, err := readLimited(filepath.Join(dir, e.Name(), "stat"), 1<<16)
 			if err != nil {
+				c.issue(filepath.Join(dir, e.Name(), "stat"), err)
+			}
+			if !usablePrefix(err) {
 				continue
 			}
 			ticks, ok := procfs.ParseStartTicks(string(body))

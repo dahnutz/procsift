@@ -26,6 +26,17 @@ func TestShellWithoutTTY(t *testing.T) {
 	}
 }
 
+func TestTruncatedPreloadFailsDefaultThreshold(t *testing.T) {
+	snap := &model.Snapshot{PreloadTruncated: true}
+	findings := hostFindings(snap)
+	if len(findings) != 1 || findings[0].Rule != "HOST-LD-PRELOAD" || findings[0].Severity != model.SevMedium {
+		t.Fatalf("findings %+v", findings)
+	}
+	if result, _ := model.HostExit(findings, model.SevMedium, false); result != "fail" {
+		t.Fatalf("result %s", result)
+	}
+}
+
 func TestSensitiveFDStaysLow(t *testing.T) {
 	snap := &model.Snapshot{Processes: []model.Process{{
 		PID: 3, Name: "dockerd", Exe: "/usr/bin/dockerd", KthreadKnown: true,

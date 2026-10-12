@@ -94,10 +94,90 @@ func TestMapCoverage(t *testing.T) {
 			c := &collector{snap: &model.Snapshot{}}
 			p := model.Process{PID: 42}
 			c.readMaps(&p, base)
-			if p.MapsOK || c.snap.MapsUnreadable != 1 || c.snap.MapsDenied != 0 || len(c.snap.Coverage) != 1 || c.snap.Coverage[0].State != state {
+			wantOK := state == "truncated"
+			if p.MapsOK != wantOK || c.snap.MapsUnreadable != 1 || c.snap.MapsDenied != 0 || len(c.snap.Coverage) != 1 || c.snap.Coverage[0].State != state {
 				t.Fatalf("p=%+v snap=%+v", p, c.snap)
 			}
 		})
+	}
+}
+
+func TestTruncatedMapsKeepCompleteRegions(t *testing.T) {
+	base := t.TempDir()
+	line := "00400000-00401000 r-xp 00000000 00:00 1 /tmp/payload (deleted)\n"
+	if err := os.WriteFile(filepath.Join(base, "maps"), []byte(line+strings.Repeat(" ", 8<<20)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := &collector{snap: &model.Snapshot{}}
+	p := model.Process{PID: 42}
+	c.readMaps(&p, base)
+	if !p.MapsOK || len(p.Maps) != 1 || p.Maps[0].Path != "/tmp/payload (deleted)" || len(c.snap.Coverage) != 1 || c.snap.Coverage[0].State != "truncated" {
+		t.Fatalf("maps=%+v coverage=%+v", p.Maps, c.snap.Coverage)
+	}
+}
+
+func TestTruncatedEnvironmentKeepsLoaderVariable(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(root, "42")
+	if err := os.Mkdir(base, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	status := "Name:\ttest\nState:\tS (sleeping)\nTgid:\t42\nPid:\t42\nPPid:\t1\nUid:\t0\t0\t0\t0\nThreads:\t1\n"
+	if err := os.WriteFile(filepath.Join(base, "status"), []byte(status), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := "LD_PRELOAD=/tmp/libx.so\x00" + strings.Repeat("A", 1<<20)
+	if err := os.WriteFile(filepath.Join(base, "environ"), []byte(env), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := &collector{proc: root, snap: &model.Snapshot{}}
+	p, err := c.readProcess(42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.LDPreload != "/tmp/libx.so" {
+		t.Fatalf("preload %q", p.LDPreload)
+	}
+	found := false
+	for _, issue := range c.snap.Coverage {
+		if issue.Source == filepath.Join(base, "environ") && issue.State == "truncated" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("coverage %+v", c.snap.Coverage)
+	}
+}
+
+func TestDevShmOpenRejectsFIFOAndSymlink(t *testing.T) {
+	root := t.TempDir()
+	fifo := filepath.Join(root, "swapped")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		info, _, err := inspectDevShm(fifo)
+		if info != nil || err == nil {
+			done <- errors.New("FIFO was accepted as regular")
+			return
+		}
+		done <- nil
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("FIFO open blocked")
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(fifo, link); err != nil {
+		t.Fatal(err)
+	}
+	if info, _, err := inspectDevShm(link); info != nil || err == nil {
+		t.Fatalf("symlink accepted: info=%v err=%v", info, err)
 	}
 }
 

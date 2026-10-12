@@ -3,6 +3,7 @@
 package collect
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,10 +16,13 @@ import (
 // noteNamespaces records per-process network-namespace and map_files state.
 // A missing or unreadable view stays a stated limit. It is not a clean result.
 func (c *collector) noteNamespaces() {
-	rootNS := readLink(filepath.Join(c.proc, "1", "ns", "net"))
-	inodes := map[uint64]struct{}{}
+	scannerNS := readLink(filepath.Join(c.proc, "self", "ns", "net"))
+	if scannerNS == "" {
+		c.snap.Coverage = append(c.snap.Coverage, model.ReadIssue{Source: filepath.Join(c.proc, "self", "ns", "net"), State: "unavailable", Detail: "scanner network namespace was not readable"})
+	}
+	scannerInodes := map[uint64]struct{}{}
 	for _, sock := range c.snap.Sockets {
-		inodes[sock.Inode] = struct{}{}
+		scannerInodes[sock.Inode] = struct{}{}
 	}
 	checked := 0
 	for i := range c.snap.Processes {
@@ -33,12 +37,12 @@ func (c *collector) noteNamespaces() {
 			return
 		}
 		checked++
-		c.noteNetNS(p, rootNS, inodes)
+		c.noteNetNS(p, scannerNS, scannerInodes)
 		c.noteMapFiles(p)
 	}
 }
 
-func (c *collector) noteNetNS(p *model.Process, rootNS string, rootInodes map[uint64]struct{}) {
+func (c *collector) noteNetNS(p *model.Process, scannerNS string, scannerInodes map[uint64]struct{}) {
 	nsPath := filepath.Join(c.proc, strconv.Itoa(p.PID), "ns", "net")
 	target, err := os.Readlink(nsPath)
 	switch {
@@ -55,30 +59,39 @@ func (c *collector) noteNetNS(p *model.Process, rootNS string, rootInodes map[ui
 		c.issue(nsPath, err)
 		return
 	}
-	if rootNS != "" && target == rootNS {
+	if scannerNS == "" {
+		p.NetNSView = "unchecked"
+		return
+	}
+	if target == scannerNS {
 		p.NetNSView = "same"
 		return
 	}
 	table := filepath.Join(c.proc, strconv.Itoa(p.PID), "net", "tcp")
 	body, err := readLimited(table, 1<<20)
 	if err != nil {
-		if os.IsPermission(err) {
-			p.NetNSView = "denied"
-			c.snap.Coverage = append(c.snap.Coverage, model.ReadIssue{Source: table, State: "denied", Detail: "network namespace socket table was not readable"})
-			return
-		}
-		if os.IsNotExist(err) {
+		if errors.Is(err, errTruncated) {
+			c.issue(table, err)
+			body = completeLines(body)
+		} else {
+			if os.IsPermission(err) {
+				p.NetNSView = "denied"
+				c.snap.Coverage = append(c.snap.Coverage, model.ReadIssue{Source: table, State: "denied", Detail: "network namespace socket table was not readable"})
+				return
+			}
+			if os.IsNotExist(err) {
+				p.NetNSView = "missing"
+				c.snap.Coverage = append(c.snap.Coverage, model.ReadIssue{Source: table, State: "unavailable", Detail: "network namespace socket table is missing"})
+				return
+			}
 			p.NetNSView = "missing"
-			c.snap.Coverage = append(c.snap.Coverage, model.ReadIssue{Source: table, State: "unavailable", Detail: "network namespace socket table is missing"})
+			c.issue(table, err)
 			return
 		}
-		p.NetNSView = "missing"
-		c.issue(table, err)
-		return
 	}
 	extra := 0
 	for _, row := range procfs.ParseNet("tcp", string(body)) {
-		if _, ok := rootInodes[row.Inode]; !ok {
+		if _, ok := scannerInodes[row.Inode]; !ok {
 			extra++
 		}
 	}
@@ -86,7 +99,11 @@ func (c *collector) noteNetNS(p *model.Process, rootNS string, rootInodes map[ui
 		p.NetNSView = "changed"
 		return
 	}
-	p.NetNSView = "same"
+	if errors.Is(err, errTruncated) {
+		p.NetNSView = "truncated"
+		return
+	}
+	p.NetNSView = "foreign"
 }
 
 func (c *collector) noteMapFiles(p *model.Process) {

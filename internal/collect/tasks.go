@@ -154,12 +154,20 @@ func (c *collector) readProcess(pid int) (model.Process, error) {
 		Cwd:          readLink(filepath.Join(base, "cwd")),
 		NetNS:        readLink(filepath.Join(base, "ns", "net")),
 	}
-	if cmd, err := readLimited(filepath.Join(base, "cmdline"), 4096); err == nil {
+	if cmd, err := readLimited(filepath.Join(base, "cmdline"), 4096); usablePrefix(err) {
+		if err != nil {
+			c.issue(filepath.Join(base, "cmdline"), err)
+			cmd = completeNUL(cmd)
+		}
 		p.Cmdline = procfs.NormalizeCmdline(cmd)
 	} else {
 		c.issue(filepath.Join(base, "cmdline"), err)
 	}
-	if env, err := readLimited(filepath.Join(base, "environ"), 1<<20); err == nil {
+	if env, err := readLimited(filepath.Join(base, "environ"), 1<<20); usablePrefix(err) {
+		if err != nil {
+			c.issue(filepath.Join(base, "environ"), err)
+			env = completeNUL(env)
+		}
 		p.LDPreload, p.LDAudit, p.LDLibrary = procfs.InterestingEnv(env)
 	} else {
 		c.issue(filepath.Join(base, "environ"), err)
@@ -179,7 +187,7 @@ func readStatus(proc string, pid int) (procfs.Status, error) {
 
 func (c *collector) readMaps(p *model.Process, base string) {
 	b, err := readLimited(filepath.Join(base, "maps"), 8<<20)
-	if err != nil {
+	if err != nil && !errors.Is(err, errTruncated) {
 		c.snap.MapsUnreadable++
 		if errors.Is(err, os.ErrPermission) {
 			c.snap.MapsDenied++
@@ -190,6 +198,11 @@ func (c *collector) readMaps(p *model.Process, base string) {
 			c.issue(filepath.Join(base, "maps"), err)
 		}
 		return
+	}
+	if err != nil {
+		c.snap.MapsUnreadable++
+		c.issue(filepath.Join(base, "maps"), err)
+		b = completeLines(b)
 	}
 	p.Maps = procfs.ParseMaps(string(b))
 	p.MapsOK = true

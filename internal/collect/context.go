@@ -120,7 +120,10 @@ func (c *collector) enrichContext() {
 
 func (c *collector) readIdentity(p *model.Process) {
 	base := filepath.Join(c.proc, strconv.Itoa(p.PID))
-	if b, err := readLimited(filepath.Join(base, "stat"), 1<<16); err == nil {
+	if b, err := readLimited(filepath.Join(base, "stat"), 1<<16); usablePrefix(err) {
+		if err != nil {
+			c.issue(filepath.Join(base, "stat"), err)
+		}
 		if ticks, ok := procfs.ParseStartTicks(string(b)); ok {
 			p.StartTicks = ticks
 		}
@@ -135,7 +138,11 @@ func (c *collector) readIdentity(p *model.Process) {
 		p.ExeDev = explain.DevString(dev)
 		p.ExeInode = ino
 	}
-	if b, err := readLimited(filepath.Join(base, "cgroup"), 8192); err == nil {
+	if b, err := readLimited(filepath.Join(base, "cgroup"), 8192); usablePrefix(err) {
+		if err != nil {
+			c.issue(filepath.Join(base, "cgroup"), err)
+			b = completeLines(b)
+		}
 		p.Cgroup = string(b)
 		p.Service = explain.ServiceFromCgroup(p.Cgroup)
 	} else if !errors.Is(err, os.ErrNotExist) {

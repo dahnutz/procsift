@@ -49,6 +49,7 @@ func TestFixtureScan(t *testing.T) {
 	write(filepath.Join(proc, "net", "tcp"), "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"+
 		"   0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 4242 1 00000000 100 0 0 10 0\n"+
 		"   1: 0100A8C0:01BB 0200A8C0:0050 01 00000000:00000000 00:00000000 00000000     0        0 7777 1 00000000 100 0 0 10 0\n")
+	write(filepath.Join(proc, "net", "packet"), "sk RefCnt Type Proto Iface R Rmem User Inode\n0000000000000000 3 3 0003 2 1 0 1000 4242\n")
 	write(filepath.Join(proc, "42", "status"), "Name:\tpayload\nState:\tS (sleeping)\nTgid:\t42\nPid:\t42\nPPid:\t1\nTracerPid:\t0\nUid:\t1000\t1000\t1000\t1000\nThreads:\t1\nVmRSS:\t     128 kB\nKthread:\t0\n")
 	write(filepath.Join(proc, "42", "cmdline"), "payload --auth-token supersecret\x00")
 	write(filepath.Join(proc, "42", "environ"), "LD_PRELOAD=/tmp/libx.so\x00SECRET=do-not-keep\x00")
@@ -93,7 +94,7 @@ func TestFixtureScan(t *testing.T) {
 	for _, f := range findings {
 		rules[f.Rule] = f
 	}
-	for _, rule := range []string{"PROC-DELETED-EXE", "PROC-LD-PRELOAD", "MEM-DELETED-EXEC", "MOD-UNSIGNED", "MOD-NO-PROC", "MOD-NO-SYSFS", "NET-ORPHAN-SOCKET", "IPC-SHM-EXEC", "IPC-ORPHAN-SHM", "IPC-DEVSHM-FILE"} {
+	for _, rule := range []string{"PROC-DELETED-EXE", "PROC-LD-PRELOAD", "MEM-DELETED-EXEC", "MOD-UNSIGNED", "MOD-NO-PROC", "MOD-NO-SYSFS", "NET-ORPHAN-SOCKET", "NET-RAW-SOCKET", "IPC-SHM-EXEC", "IPC-ORPHAN-SHM", "IPC-DEVSHM-FILE"} {
 		if _, ok := rules[rule]; !ok {
 			t.Fatalf("missing %s in %v", rule, ruleNames(findings))
 		}

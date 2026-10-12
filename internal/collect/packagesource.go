@@ -3,6 +3,7 @@
 package collect
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 )
@@ -13,8 +14,13 @@ import (
 func (c *collector) attachPackageSources() {
 	body, err := readLimited(filepath.Join(c.proc, "self", "mountinfo"), 1<<20)
 	if err != nil {
-		c.snap.Limits = append(c.snap.Limits, "Package-source mount context was unavailable; dpkg-unlisted paths remain unclassified.")
-		return
+		c.issue(filepath.Join(c.proc, "self", "mountinfo"), err)
+		if !errors.Is(err, errTruncated) {
+			c.snap.Limits = append(c.snap.Limits, "Package-source mount context was unavailable; dpkg-unlisted paths remain unclassified.")
+			return
+		}
+		body = completeLines(body)
+		c.snap.Limits = append(c.snap.Limits, "Package-source mount context was truncated; later mounts were not checked.")
 	}
 	var mounts []string
 	for _, line := range strings.Split(string(body), "\n") {

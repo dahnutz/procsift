@@ -89,11 +89,12 @@ type Snapshot struct {
 	// ExtraUID0 lists uid 0 account names other than root. Password fields are never copied.
 	ExtraUID0 []string
 
-	PreloadPaths    []string
-	BPFPins         []string
-	BPFUnprivileged string
-	BPFTree         string
-	RPMState        string
+	PreloadPaths     []string
+	PreloadTruncated bool
+	BPFPins          []string
+	BPFUnprivileged  string
+	BPFTree          string
+	RPMState         string
 }
 
 // ReadIssue records an observation that could not be collected completely.
