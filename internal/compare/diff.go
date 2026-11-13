@@ -29,19 +29,17 @@ type Result struct {
 
 // Rules first available in 0.5. Their first appearance after an upgrade is
 // scanner coverage, not by itself evidence that the host changed.
-var addedRules = map[string]struct{}{
-	"PROC-SOCKET-SHELL": {}, "PROC-SENSITIVE-FD": {}, "PROC-LATE-THREAD": {},
-	"PROC-UNOWNED-LIB": {}, "PROC-NETNS": {}, "PROC-MAP-FILES": {},
-	"MEM-PAGE-MISMATCH": {}, "HOST-LD-PRELOAD": {}, "HOST-BPF-PIN": {},
-	"HOST-BPF-UNPRIV": {}, "NET-RAW-SOCKET": {}, "NET-METADATA": {},
-}
-
 // Diff compares two reports. It refuses to assign host changes across boots
 // or hosts, and treats scan-created or short-lived observations separately.
 func Diff(older, newer model.Report) Result {
 	var result Result
+	// Rules and severities change between releases, so an upgrade alone could
+	// look like a host change. Reports must come from the same scanner build;
+	// longer-term history belongs in a SIEM, not in diff.
 	if older.Version != newer.Version {
 		result.VersionNote = fmt.Sprintf("scanner version %s then %s", empty(older.Version), empty(newer.Version))
+		result.ScopeIssue = "reports were produced by different ProcSift versions; rescan both with the same version"
+		return result
 	}
 	if older.Host.BootID == "" || newer.Host.BootID == "" {
 		result.ScopeIssue = "both reports need a boot ID before host changes can be compared"
@@ -190,10 +188,6 @@ func diffFindings(older, newer model.Report) []Change {
 			out = append(out, Change{Kind: "uncertain", Subject: key, Detail: "the process start tick is missing from one report"})
 			continue
 		}
-		if newRuleInUpgrade(older.Version, newer.Version, f.Rule) {
-			out = append(out, Change{Kind: "new-rule", Subject: key, Detail: "new scanner coverage; verify the finding before attributing a host change"})
-			continue
-		}
 		kind := "observed"
 		if model.AtLeast(f.Severity, model.SevMedium) {
 			kind = "host-evidence"
@@ -211,11 +205,6 @@ func diffFindings(older, newer model.Report) []Change {
 	}
 	sortChanges(out)
 	return out
-}
-
-func newRuleInUpgrade(oldVersion, newVersion, rule string) bool {
-	_, added := addedRules[rule]
-	return added && strings.HasPrefix(newVersion, "0.5.") && !strings.HasPrefix(oldVersion, "0.5.")
 }
 
 func selfProcess(rep model.Report, p model.ProcessView) bool {

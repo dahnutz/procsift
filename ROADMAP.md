@@ -4,6 +4,20 @@ This file records implemented behavior and open work. Rule names identify observ
 
 For usage, see [README.md](README.md) and [FIRST_SCAN.md](FIRST_SCAN.md). [PROPOSAL.md](PROPOSAL.md) describes the collection and report model.
 
+## Unreleased
+
+- The text report shows control characters from process names, paths and command lines as `\xNN` or `\uNNNN` escapes, so host data cannot send terminal escape sequences. Newlines are kept for the report layout. JSON output is unchanged.
+- The `-manifest` file, `/proc/<pid>/exe` images and `/dev/shm` entries are opened without blocking and must be regular files. A FIFO or device passed as `-manifest` no longer hangs the scan. Symlinks are still refused in `/dev/shm` and followed for the operator's manifest and for magic links.
+- `NET-RAW-SOCKET` says when a packet socket captures all protocols (`ETH_P_ALL`). It becomes medium when such a socket has no owner in a complete descriptor census. When the census is incomplete or the scan uses `-pid`, it stays low and says the owner is unknown.
+- Every socket table shares one 32 MiB read cap and a 65536-row cap per table. A large TCP inventory no longer pushes raw and packet sockets out of the scan. A table with rows that cannot be parsed is reported as unrecognized instead of read as empty.
+- Late-thread checks stop reading once eight late threads are recorded, and a thread that exits during the walk is not reported as a coverage gap.
+- A process environment over the 1 MiB read cap produces `PROC-ENV-OVERSIZE` (low): the loader-variable check is inconclusive because a variable can sit past the cap. Memory findings from a process whose `maps` exceeded 8 MiB say the region list is partial.
+- Command-line redaction also hides the token after `Bearer`, `Basic`, `Token` or `Digest`, credential headers such as `X-Api-Key:` or `--header=Authorization:`, `curl -u` passwords, and token-like URL user names. URL passwords are hidden up to the last `@`, and the URL user is kept.
+- `HOST-LD-PRELOAD` records the file's size, mode, owner, and time, and the package, location, and mode of each listed library. It becomes high when a library is in a temporary path, world-writable, or exists but no dpkg package lists it; a missing library stays medium. The parser's glibc behavior is checked against glibc 2.42 `elf/rtld.c`.
+- `capture` keeps the image only when the executable path before the read, the opened descriptor, and the path after the read agree. It records status, cgroup, namespace links, and loader variables (never the raw environment), lists up to 256 descriptors, adds raw, raw6, and packet sockets, and records unreadable tables. Every `/proc` read is capped, and bundle files are created through the directory descriptor with `O_EXCL|O_NOFOLLOW`.
+- `/dev/shm` FIFOs, sockets, devices, and symlinks are listed by kind (`IPC-DEVSHM-SPECIAL`, low) without being opened, and the walk stops at 4096 entries. Startup and unit files are opened without blocking, and symlinks are refused in user unit directories, so a FIFO planted there can no longer stall a root scan.
+- `diff` refuses reports made by different ProcSift versions, because rule coverage and severities change between releases. It is meant for comparing rescans made with the same binary; longer-term history belongs in the SIEM integration. The upgrade-only `new-rule` change kind is removed.
+
 ## 0.5.2 — collection and capture
 
 - Packet sockets are parsed from `/proc/net/packet`. A truncated `/proc` read keeps its complete prefix rows or fields and records the missing tail in coverage.

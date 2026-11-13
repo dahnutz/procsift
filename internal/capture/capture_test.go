@@ -128,15 +128,132 @@ func TestCaptureRemovesFailedImage(t *testing.T) {
 
 func TestCaptureFDsSortNumericallyBeforeCap(t *testing.T) {
 	dir := t.TempDir()
-	for i := 0; i < 80; i++ {
+	for i := 0; i < 300; i++ {
 		if err := os.Symlink("/dev/null", filepath.Join(dir, strconv.Itoa(i))); err != nil {
 			t.Fatal(err)
 		}
 	}
-	fds, _ := readFDs(dir, t.TempDir())
+	fds, _, _ := readFDs(dir, t.TempDir())
 	joined := strings.Join(fds, "\n")
-	if !strings.Contains(joined, "63 -> /dev/null") || strings.Contains(joined, "64 -> /dev/null") {
+	if !strings.Contains(joined, "\n255 -> /dev/null") || strings.Contains(joined, "\n256 -> /dev/null") || !strings.Contains(joined, "truncated at 256") {
 		t.Fatalf("fd selection %s", joined)
+	}
+	// fds[0] is the truncation note.
+	if !strings.HasPrefix(fds[1], "0 -> ") || !strings.HasPrefix(fds[3], "2 -> ") || !strings.HasPrefix(fds[11], "10 -> ") {
+		t.Fatalf("order %v", fds[:12])
+	}
+}
+
+func TestCaptureStableIdentityNeedsAllThreeViews(t *testing.T) {
+	same := fileID{dev: 8, ino: 10}
+	other := fileID{dev: 8, ino: 11}
+	ok := identityCheck{pid: 3, ticks: 50, before: same, beforeOK: true, opened: same, after: same, afterPID: 3, afterTicks: 50, afterOK: true}
+	if !stableIdentity(ok) {
+		t.Fatal("matching views rejected")
+	}
+	for name, edit := range map[string]func(*identityCheck){
+		"replaced before open":   func(c *identityCheck) { c.before = other },
+		"replaced after read":    func(c *identityCheck) { c.after = other },
+		"descriptor differs":     func(c *identityCheck) { c.opened = other },
+		"before stat failed":     func(c *identityCheck) { c.beforeOK = false },
+		"pid reused":             func(c *identityCheck) { c.afterTicks = 99 },
+		"no descriptor identity": func(c *identityCheck) { c.before, c.opened, c.after = fileID{}, fileID{}, fileID{} },
+	} {
+		c := ok
+		edit(&c)
+		if stableIdentity(c) {
+			t.Errorf("%s: accepted as stable", name)
+		}
+	}
+}
+
+func TestCaptureContextAndExtraTables(t *testing.T) {
+	root := t.TempDir()
+	proc := filepath.Join(root, "proc")
+	pid := filepath.Join(proc, "3")
+	for _, d := range []string{"fd", "net", "ns"} {
+		if err := os.MkdirAll(filepath.Join(pid, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := map[string]string{
+		"status":     "Name:\tapp\nState:\tS (sleeping)\nPid:\t3\nTgid:\t3\nPPid:\t1\nUid:\t0\t0\t0\t0\n",
+		"stat":       "3 (app) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 50 1 1\n",
+		"cgroup":     "0::/system.slice/app.service\n",
+		"environ":    "PATH=/usr/bin\x00LD_PRELOAD=/tmp/libx.so\x00SECRET=do-not-keep\x00",
+		"net/packet": "sk RefCnt Type Proto Iface R Rmem User Inode\nffff 3 3 0003 0 1 0 0 888\n",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(pid, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// An unreadable table must be recorded, not skipped silently.
+	if err := os.Mkdir(filepath.Join(pid, "net", "udp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("net:[4026531840]", filepath.Join(pid, "ns", "net")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("socket:[888]", filepath.Join(pid, "fd", "4")); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(root, "case")
+	if err := Run(Options{ProcRoot: proc, PID: 3, OutDir: out, Version: "0.5.2"}); err != nil {
+		t.Fatal(err)
+	}
+	man := readManifest(t, out)
+	if man.Cgroup == "" || !strings.Contains(man.Status, "Name:\tapp") || man.Namespaces["net"] != "net:[4026531840]" {
+		t.Fatalf("context %+v", man)
+	}
+	if man.LoaderEnv["LD_PRELOAD"] != "/tmp/libx.so" || len(man.LoaderEnv) != 1 {
+		t.Fatalf("loader env %+v", man.LoaderEnv)
+	}
+	raw, err := os.ReadFile(filepath.Join(out, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "do-not-keep") {
+		t.Fatal("raw environment value stored in the manifest")
+	}
+	if len(man.Sockets) != 1 || !strings.HasPrefix(man.Sockets[0], "packet ") {
+		t.Fatalf("sockets %+v", man.Sockets)
+	}
+	if !strings.Contains(strings.Join(man.Failures, "\n"), "net/udp:") {
+		t.Fatalf("unreadable table not recorded: %+v", man.Failures)
+	}
+}
+
+func TestCaptureRefusesSwappedOutputDirectory(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	if err := os.Mkdir(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openOutDir(link); err == nil {
+		t.Fatal("symlinked output directory accepted")
+	}
+	open := filepath.Join(root, "open")
+	if err := os.Mkdir(open, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openOutDir(open); err == nil {
+		t.Fatal("group/world-readable directory accepted as the private bundle directory")
+	}
+	dir, err := openOutDir(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dir.Close()
+	if err := os.Symlink("/etc/passwd", filepath.Join(real, "maps.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAt(dir, "maps.txt", []byte("x")); err == nil {
+		t.Fatal("wrote through a planted symlink")
 	}
 }
 

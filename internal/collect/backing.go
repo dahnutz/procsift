@@ -89,8 +89,13 @@ func (c *collector) noteNetNS(p *model.Process, scannerNS string, scannerInodes 
 			return
 		}
 	}
+	nsRows := procfs.ParseNet("tcp", string(body))
+	if !c.noteUnparsed(table, string(body), len(nsRows)) {
+		p.NetNSView = "missing"
+		return
+	}
 	extra := 0
-	for _, row := range procfs.ParseNet("tcp", string(body)) {
+	for _, row := range nsRows {
 		if _, ok := scannerInodes[row.Inode]; !ok {
 			extra++
 		}

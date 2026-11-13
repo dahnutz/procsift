@@ -41,3 +41,13 @@ func TestParsePacket(t *testing.T) {
 		t.Fatalf("rows %+v", rows)
 	}
 }
+
+func TestParsePacketKeepsProtocolAndInterface(t *testing.T) {
+	rows, bad := ParsePacket("sk RefCnt Type Proto Iface R Rmem User Inode\nffff8a0c4d2e1000 3 3 0003 0 1 0 0 123456\nffff8a0c4d2e2000 3 2 0800 4 1 0 0 18446744073709551615\n")
+	if bad != 0 || len(rows) != 2 {
+		t.Fatalf("rows %+v bad %d", rows, bad)
+	}
+	if rows[0].EtherProto != 0x0003 || rows[0].Ifindex != 0 || rows[1].EtherProto != 0x0800 || rows[1].Ifindex != 4 || rows[1].Inode != 18446744073709551615 {
+		t.Fatalf("rows %+v", rows)
+	}
+}

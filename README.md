@@ -69,7 +69,7 @@ sudo ./bin/procsift diff -old /tmp/procsift-first.json -new /tmp/procsift-second
 
 `-pid` narrows the process census. It still performs selected host-level file checks and socket reads; it is not a strict single-process scan. `capture` creates a new local directory and copies evidence from the selected process. It never executes that copy. An existing destination is rejected.
 
-`diff` compares reports from the same host and boot with the same privileges, scan options, manifest contents, and minimum severity. Scanner-created processes are excluded; one-snapshot processes and sockets are shown as observations. A new medium or high finding counts as host evidence. Different boots, hosts, or scan settings return exit code `2`. Reports without recorded scan options cannot be compared. The command reports differences between snapshots; it does not determine why they occurred.
+`diff` compares reports from the same host and boot, made by the same ProcSift version with the same privileges, scan options, manifest contents, and minimum severity. Scanner-created processes are excluded; one-snapshot processes and sockets are shown as observations. A new medium or high finding counts as host evidence. Different boots, hosts, versions, or scan settings return exit code `2`. `diff` is for comparing rescans; keep longer-term history in your SIEM. Reports without recorded scan options cannot be compared. The command reports differences between snapshots; it does not determine why they occurred.
 
 | Scan exit code | Meaning |
 | --- | --- |

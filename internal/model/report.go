@@ -79,6 +79,7 @@ type ObjectCounts struct {
 	SysVSegments        int    `json:"sysv_shm_segments"`
 	SysVBytes           uint64 `json:"sysv_shm_bytes"`
 	DevShmFiles         int    `json:"dev_shm_files"`
+	DevShmSpecial       int    `json:"dev_shm_special_entries"`
 	KernelModules       int    `json:"kernel_modules"`
 	Sockets             int    `json:"sockets"`
 	MapsUnreadable      int    `json:"maps_unreadable_processes"`

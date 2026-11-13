@@ -167,6 +167,7 @@ func (c *collector) readProcess(pid int) (model.Process, error) {
 		if err != nil {
 			c.issue(filepath.Join(base, "environ"), err)
 			env = completeNUL(env)
+			p.EnvTruncated = true
 		}
 		p.LDPreload, p.LDAudit, p.LDLibrary = procfs.InterestingEnv(env)
 	} else {
@@ -179,6 +180,8 @@ func (c *collector) readProcess(pid int) (model.Process, error) {
 
 func readStatus(proc string, pid int) (procfs.Status, error) {
 	b, err := readLimited(filepath.Join(proc, strconv.Itoa(pid), "status"), 1<<20)
+	// status is small and kernel-generated. A truncated copy would be a
+	// partial identity (PID, UIDs, state), so it stays a failure.
 	if err != nil {
 		return procfs.Status{}, err
 	}
@@ -203,6 +206,7 @@ func (c *collector) readMaps(p *model.Process, base string) {
 		c.snap.MapsUnreadable++
 		c.issue(filepath.Join(base, "maps"), err)
 		b = completeLines(b)
+		p.MapsTruncated = true
 	}
 	p.Maps = procfs.ParseMaps(string(b))
 	p.MapsOK = true
@@ -381,8 +385,10 @@ func killExists(pid int) bool {
 	return err == nil || err == syscall.EPERM
 }
 
+// readLimited reads at most max bytes. It is used for /proc, /sys and
+// root-owned host files; O_NONBLOCK still keeps a FIFO from stalling the scan.
 func readLimited(path string, max int) ([]byte, error) {
-	f, err := os.Open(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
 	}

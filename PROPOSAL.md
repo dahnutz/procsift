@@ -18,6 +18,7 @@ ProcSift reads Linux interfaces directly. It does not depend on `ps`, `ss`, `net
 | `/proc/sysvipc/shm` and `/dev/shm` | Shared-memory inventory |
 | Startup files and generated systemd units | Configuration references to selected processes |
 | Local package records | Ownership and manifest comparisons for selected images and utilities |
+| `/etc/ld.so.preload` | Listed libraries; stat only (existence, mode) and dpkg ownership of each, never opened |
 
 A bounded 16-byte read of an anonymous executable mapping can identify an ELF, PE, or script header. `-no-magic` disables that read. The default scan does not sweep PID space or compare mapped page bytes with backing files.
 
@@ -38,7 +39,7 @@ The Attention list orders at most five subjects using fixed weights on findings.
 - `-pid N` narrows the process census to one PID and at most eight parents. Selected host file, socket, module, shared-memory, and host-signal checks still run; the report states that scope.
 - `-sweep` probes PID numbers with `kill(pid, 0)` within a count and time budget. It sends no signal and cannot prove that a kernel-level rootkit is absent.
 - `-deep` compares at most 16 bytes from selected executable pages with the exact `map_files` backing inode. Process identity and the mapped inode are checked before and after the read. Missing or changed backing is a coverage limit, not a mismatch.
-- `capture -pid` writes a new local directory containing one process's open executable and related metadata. The manifest records complete versus prefix hash scope. Captured bytes are not executed.
+- `capture -pid` writes a new local directory containing one process's open executable and related metadata: status, cgroup, namespace links, loader variables only from the environment, up to 256 descriptors, and the sockets those descriptors hold, read from the target's own network namespace. The manifest records complete versus prefix hash scope; the image is kept only when the executable path before the read, the descriptor read, and the path after the read are the same file. Files are created inside the new directory through its descriptor. Captured bytes are not executed.
 - `diff` accepts two JSON reports from the same host and boot with matching privileges, scan options, manifest contents, and minimum severity. Scanner-origin changes are excluded. Process and socket changes seen in only one snapshot are observations; a new medium or high finding counts as host evidence. A diff describes changed evidence, not its cause.
 
 ## Output and release checks
@@ -51,4 +52,4 @@ The Go module path is `github.com/dahnutz/procsift`. `make build` creates a stat
 
 ## Remaining limits
 
-RPM ownership is unavailable until an RPM database reader is implemented. Startup files are used to explain observed processes; there is no independent persistence inventory. The socket inventory does not include Unix-domain sockets, and the BPF inventory lists pins rather than all loaded programs. The normal scan does not read the journal, walk raw physical memory, or replay a captured `/proc` tree. The optional page comparison reads short headers; it is not a full memory-versus-disk analysis. Two snapshots cannot explain every short-lived connection or process. Ordinary-host and benign-update validation remain useful before making performance or false-positive claims.
+RPM ownership is unavailable until an RPM database reader is implemented. Startup files are used to explain observed processes; there is no independent persistence inventory. The socket inventory does not include Unix-domain sockets, and the BPF inventory lists pins rather than all loaded programs. The normal scan does not read the journal, walk raw physical memory, or replay a captured `/proc` tree. The optional page comparison reads short headers; it is not a full memory-versus-disk analysis. Reads that a local user can influence are opened without blocking and without following symlinks, but the kernel can still stall a read: `/proc/<pid>/cmdline`, `environ` or `maps` of a process stuck holding its memory lock, and `stat` of a path on a hung network filesystem, can block until the kernel releases them. Two snapshots cannot explain every short-lived connection or process. Ordinary-host and benign-update validation remain useful before making performance or false-positive claims.

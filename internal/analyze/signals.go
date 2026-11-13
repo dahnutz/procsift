@@ -1,25 +1,80 @@
 package analyze
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dahnutz/procsift/internal/model"
 )
 
+// preloadFinding reports /etc/ld.so.preload. Any entry is medium, because a
+// system-wide preload loads into every dynamically linked process. It is high
+// when a listed library sits in a temporary path, is world-writable, or exists
+// but no package lists it. A missing library stays medium: the loader prints
+// an error and continues.
+func preloadFinding(s *model.Snapshot) model.Finding {
+	f := model.Finding{
+		Rule: "HOST-LD-PRELOAD", Severity: model.SevMedium, Category: "process",
+		Summary: "ld.so.preload contains entries or exceeds the read limit",
+		Detail:  "Every dynamically linked program loads the listed libraries. Some EDR agents, memory allocators (jemalloc, tcmalloc), and debugging or time-shifting shims are installed this way; a stock system usually has no such file. A listed library that does not exist only makes the loader print an error. The file was read only to list paths, at most 4 KiB, and no listed library was opened. This is separate from LD_PRELOAD in a process environment.",
+	}
+	if pf := s.PreloadFile; pf != nil {
+		line := fmt.Sprintf("file %d bytes, mode %s, owner uid %d, modified %s", pf.Size, pf.Mode, pf.UID, pf.ModTime.Format(time.RFC3339))
+		if pf.Package != "" {
+			line += ", listed by dpkg package " + pf.Package
+		}
+		f.Evidence = append(f.Evidence, line)
+	}
+	high := false
+	for i, path := range s.PreloadPaths {
+		line := path
+		if i < len(s.PreloadEntries) && s.PreloadEntries[i].Path == path {
+			e := s.PreloadEntries[i]
+			var notes []string
+			if e.Temp {
+				notes = append(notes, "temporary path")
+				high = true
+			}
+			if e.WorldWritable {
+				notes = append(notes, "world-writable")
+				high = true
+			}
+			if e.Missing {
+				notes = append(notes, "file does not exist")
+			}
+			switch e.Ownership {
+			case "packaged":
+				notes = append(notes, "dpkg package "+e.Package)
+			case "unpackaged":
+				notes = append(notes, "not listed by any dpkg package")
+				high = true
+			default:
+				if !e.Missing {
+					notes = append(notes, "package ownership unknown")
+				}
+			}
+			if len(notes) > 0 {
+				line += ": " + strings.Join(notes, ", ")
+			}
+		}
+		f.Evidence = append(f.Evidence, line)
+	}
+	if s.PreloadTruncated {
+		f.Evidence = append(f.Evidence, "ld.so.preload exceeds the 4 KiB read limit; the listing is partial")
+	}
+	if high {
+		f.Severity = model.SevHigh
+		f.Summary = "ld.so.preload names a library in a temporary, writable, or unpackaged location"
+	}
+	return f
+}
+
 func hostFindings(s *model.Snapshot) []model.Finding {
 	var out []model.Finding
 	if len(s.PreloadPaths) > 0 || s.PreloadTruncated {
-		ev := append([]string(nil), s.PreloadPaths...)
-		if s.PreloadTruncated {
-			ev = append(ev, "ld.so.preload exceeds the 4 KiB read limit; remaining entries were not inspected")
-		}
-		out = append(out, model.Finding{
-			Rule: "HOST-LD-PRELOAD", Severity: model.SevMedium, Category: "process",
-			Summary:  "ld.so.preload contains entries or exceeds the read limit",
-			Detail:   "The file was read only to list paths, at most 4 KiB. A preload path is an observation. This is separate from LD_PRELOAD in a process environment.",
-			Evidence: ev,
-		})
+		out = append(out, preloadFinding(s))
 	}
 	if s.BPFUnprivileged == "enabled" {
 		out = append(out, model.Finding{
@@ -55,7 +110,37 @@ func processSignalFindings(s *model.Snapshot, p *model.Process) []model.Finding 
 	out = append(out, unownedLibFinding(p)...)
 	out = append(out, namespaceFindings(p)...)
 	out = append(out, pageFindings(p)...)
+	out = append(out, envOversizeFinding(p)...)
 	return out
+}
+
+// partialMaps marks memory findings from a process whose region list was cut
+// at the read cap, so the report says later regions were not checked.
+func partialMaps(p *model.Process, findings []model.Finding) []model.Finding {
+	if !p.MapsTruncated {
+		return findings
+	}
+	for i := range findings {
+		findings[i].Evidence = append(findings[i].Evidence, "region list is partial: maps exceeded the 8 MiB read cap")
+	}
+	return findings
+}
+
+func envOversizeFinding(p *model.Process) []model.Finding {
+	if !p.EnvTruncated {
+		return nil
+	}
+	ev := "LD_PRELOAD, LD_AUDIT and LD_LIBRARY_PATH were looked for only in the first 1 MiB"
+	if p.LDPreload != "" || p.LDAudit != "" || p.LDLibrary != "" {
+		ev = "a loader variable was found in the first 1 MiB; later entries were not inspected"
+	}
+	return []model.Finding{{
+		Rule: "PROC-ENV-OVERSIZE", Severity: model.SevLow, Category: "process",
+		PID: p.PID, Process: p.Name,
+		Summary:  "process environment exceeds the 1 MiB read limit",
+		Detail:   "The loader-variable check is inconclusive for this process: a process sets the order of its own environment, so a variable can sit past the cap. Large build, CI or container environments can also exceed it. Only loader variables are kept; other values were not copied.",
+		Evidence: []string{ev},
+	}}
 }
 
 func shellFinding(s *model.Snapshot, p *model.Process) []model.Finding {
@@ -165,8 +250,11 @@ func pageFindings(p *model.Process) []model.Finding {
 	}}
 }
 
+// ethPAll is ETH_P_ALL from include/uapi/linux/if_ether.h.
+const ethPAll = 0x0003
+
 func socketTableFindings(s *model.Snapshot) []model.Finding {
-	var raw, meta []model.Finding
+	var raw, rawMedium, meta []model.Finding
 	for _, sock := range s.Sockets {
 		owner, owned := s.SocketOwner[sock.Inode]
 		who := "unowned"
@@ -190,13 +278,34 @@ func socketTableFindings(s *model.Snapshot) []model.Finding {
 				Detail:   "A local sniffer can hold this socket. The finding names the owner when the descriptor census attributed it, and says unowned otherwise. Nothing was contacted.",
 				Evidence: []string{line},
 			}
+			allProto := sock.Proto == "packet" && sock.EtherProto == ethPAll
+			if allProto {
+				scope := "interface " + itoa(sock.Ifindex)
+				if sock.Ifindex == 0 {
+					scope = "all interfaces"
+				}
+				f.Evidence = append(f.Evidence, "captures all protocols (ETH_P_ALL) on "+scope)
+			}
+			if !owned && (s.NetIncomplete || s.Focused) {
+				f.Evidence = append(f.Evidence, "owner unknown: the descriptor census did not cover every process")
+			} else if !owned && allProto {
+				// Every visible process's descriptors were read and none holds
+				// this inode. That is what a hidden listener looks like.
+				f.Severity = model.SevMedium
+				f.Summary = "packet socket capturing all protocols has no visible owner"
+				f.Detail = "The socket receives every frame type, and no process in the complete descriptor census holds it. Packet-filter backdoors listen this way. A process that exited during the scan, a descriptor passed between processes, or a socket held only by the kernel can also explain it. Nothing was contacted."
+			}
 			if proc != nil {
 				f.PID = proc.PID
 				f.Process = proc.Name
 			} else {
 				f.Subject = who
 			}
-			raw = append(raw, f)
+			if f.Severity == model.SevMedium {
+				rawMedium = append(rawMedium, f)
+			} else {
+				raw = append(raw, f)
+			}
 		}
 		if strings.Contains(sock.Remote, "169.254.169.254") {
 			f := model.Finding{
@@ -214,6 +323,7 @@ func socketTableFindings(s *model.Snapshot) []model.Finding {
 			meta = append(meta, f)
 		}
 	}
+	// The row cap applies to low rows only, so it can never hide a medium one.
 	if len(raw) > 8 {
 		raw = append(raw[:8], model.Finding{
 			Rule: "NET-RAW-SOCKET", Severity: model.SevLow, Category: "network",
@@ -221,7 +331,7 @@ func socketTableFindings(s *model.Snapshot) []model.Finding {
 			Detail:  "The inventory stopped after 8 rows.",
 		})
 	}
-	return append(raw, meta...)
+	return append(append(rawMedium, raw...), meta...)
 }
 
 func isInterpreter(p *model.Process) bool {

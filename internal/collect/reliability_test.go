@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dahnutz/procsift/internal/analyze"
 	"github.com/dahnutz/procsift/internal/model"
 )
 
@@ -111,7 +112,7 @@ func TestTruncatedMapsKeepCompleteRegions(t *testing.T) {
 	c := &collector{snap: &model.Snapshot{}}
 	p := model.Process{PID: 42}
 	c.readMaps(&p, base)
-	if !p.MapsOK || len(p.Maps) != 1 || p.Maps[0].Path != "/tmp/payload (deleted)" || len(c.snap.Coverage) != 1 || c.snap.Coverage[0].State != "truncated" {
+	if !p.MapsOK || !p.MapsTruncated || len(p.Maps) != 1 || p.Maps[0].Path != "/tmp/payload (deleted)" || len(c.snap.Coverage) != 1 || c.snap.Coverage[0].State != "truncated" {
 		t.Fatalf("maps=%+v coverage=%+v", p.Maps, c.snap.Coverage)
 	}
 }
@@ -135,7 +136,7 @@ func TestTruncatedEnvironmentKeepsLoaderVariable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.LDPreload != "/tmp/libx.so" {
+	if p.LDPreload != "/tmp/libx.so" || !p.EnvTruncated {
 		t.Fatalf("preload %q", p.LDPreload)
 	}
 	found := false
@@ -226,5 +227,124 @@ func TestSweepBudgets(t *testing.T) {
 	result = probeTasksContext(context.Background(), 5, 4, func(int) bool { return false })
 	if !result.Complete || result.Probed != 4 {
 		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestDevShmUnreadableFileKeepsMetadata(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses the permission check this test relies on")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "stage.bin")
+	if err := os.WriteFile(path, []byte("\x7fELF"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Execute-only: the mode marks it executable but it cannot be opened for reading.
+	if err := os.Chmod(path, 0o100); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+	files, issues, err := readDevShm(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Name != "stage.bin" || !files[0].Executable || files[0].Magic != "" || files[0].Size != 4 {
+		t.Fatalf("files %+v", files)
+	}
+	if len(issues) != 1 || issues[0].State != "denied" {
+		t.Fatalf("issues %+v", issues)
+	}
+}
+
+func TestManifestOpenFollowsSymlinkAndRefusesFIFO(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	body := "d41d8cd98f00b204e9800998ecf8427e  /bin/true\n"
+	if err := os.WriteFile(real, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	got, digest, err := loadManifest(link)
+	if err != nil || len(got) != 1 || digest == "" {
+		t.Fatalf("symlinked manifest: got %v digest %q err %v", got, digest, err)
+	}
+	fifo := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, digest, err := loadManifest(fifo)
+		if err == nil || digest != "" {
+			done <- errors.New("FIFO manifest was accepted")
+			return
+		}
+		done <- nil
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("FIFO manifest blocked the scan")
+	}
+}
+
+func TestDevShmListsSpecialEntriesWithoutOpening(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "stage.bin"), []byte("\x7fELF\x02\x01"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(dir, "pipe"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/dev/zero", filepath.Join(dir, "zero")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "subdir"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		files []model.DevShmFile
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		files, _, err := readDevShm(dir)
+		done <- result{files, err}
+	}()
+	var got result
+	select {
+	case got = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("/dev/shm inventory blocked")
+	}
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	kinds := map[string]model.DevShmFile{}
+	for _, f := range got.files {
+		kinds[f.Name] = f
+	}
+	if len(got.files) != 3 || kinds["stage.bin"].Kind != "file" || kinds["stage.bin"].Magic != "elf" ||
+		kinds["pipe"].Kind != "fifo" || kinds["zero"].Kind != "symlink" || kinds["zero"].Target != "/dev/zero" {
+		t.Fatalf("entries %+v", got.files)
+	}
+	findings := analyze.Analyze(&model.Snapshot{DevShm: got.files})
+	special := 0
+	for _, f := range findings {
+		if f.Rule == "IPC-DEVSHM-SPECIAL" {
+			special++
+		}
+		if f.Rule == "IPC-DEVSHM-FILE" && f.Subject != "stage.bin" {
+			t.Fatalf("special entry raised as a staged file: %+v", f)
+		}
+	}
+	if special != 2 {
+		t.Fatalf("findings %+v", findings)
 	}
 }

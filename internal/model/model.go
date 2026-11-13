@@ -67,8 +67,11 @@ type Snapshot struct {
 	SysV   []SysVShm
 	DevShm []DevShmFile
 
-	Sockets           []Socket
-	SocketOwner       map[uint64]int
+	Sockets     []Socket
+	SocketOwner map[uint64]int
+	// Focused is set for -pid scans. Only the focused process and its parents
+	// are in the descriptor census, so other sockets have no known owner.
+	Focused           bool
 	NetIncomplete     bool
 	NetOrphans        []Socket
 	Coverage          []ReadIssue
@@ -89,12 +92,43 @@ type Snapshot struct {
 	// ExtraUID0 lists uid 0 account names other than root. Password fields are never copied.
 	ExtraUID0 []string
 
+	// ManifestSHA256 identifies the -manifest bytes that were applied.
+	// It is empty when no manifest was supplied or it was not applied.
+	ManifestSHA256 string
+
 	PreloadPaths     []string
 	PreloadTruncated bool
-	BPFPins          []string
-	BPFUnprivileged  string
-	BPFTree          string
-	RPMState         string
+	// PreloadFile describes /etc/ld.so.preload itself when it exists.
+	PreloadFile *PreloadFile
+	// PreloadEntries carries per-path context for PreloadPaths, in order.
+	PreloadEntries  []PreloadEntry
+	BPFPins         []string
+	BPFUnprivileged string
+	BPFTree         string
+	RPMState        string
+}
+
+// PreloadFile holds file facts for /etc/ld.so.preload.
+type PreloadFile struct {
+	Size    int64
+	Mode    string
+	UID     int
+	ModTime time.Time
+	// Package names the dpkg package listing the file; it is normally absent.
+	Package string
+}
+
+// PreloadEntry is one library named in /etc/ld.so.preload.
+// Ownership is "packaged", "unpackaged" or "unknown" (no readable dpkg
+// database, a capped search, or a bare name resolved through the loader's
+// search path).
+type PreloadEntry struct {
+	Path          string
+	Package       string
+	Ownership     string
+	Missing       bool
+	Temp          bool
+	WorldWritable bool
 }
 
 // ReadIssue records an observation that could not be collected completely.
@@ -123,11 +157,18 @@ type Process struct {
 	Listed       bool
 	MapsOK       bool
 	Maps         []Region
+	// MapsTruncated means maps exceeded its read cap; Maps holds the
+	// complete regions before the cut, and later regions were not checked.
+	MapsTruncated bool
 
 	LDPreload string
 	LDAudit   string
 	LDLibrary string
-	TracerPID int
+	// EnvTruncated means environ exceeded its read cap. Loader variables
+	// were looked for only in the prefix; the process orders its own
+	// environment, so one can sit past the cap.
+	EnvTruncated bool
+	TracerPID    int
 
 	NetNS      string
 	FDComplete bool
@@ -327,6 +368,11 @@ type DevShmFile struct {
 	Size       int64
 	Executable bool
 	Magic      string
+	// Kind is "file" for a regular file, or "fifo", "socket", "device" or
+	// "symlink". Non-regular entries are listed but never opened.
+	Kind string
+	// Target is the link text of a symlink entry.
+	Target string
 }
 
 // Socket is one row from the kernel's tcp or udp tables.
@@ -338,6 +384,11 @@ type Socket struct {
 	StateID int
 	UID     int
 	Inode   uint64
+
+	// EtherProto and Ifindex are set for packet sockets only.
+	// EtherProto 0x0003 is ETH_P_ALL; Ifindex 0 means every interface.
+	EtherProto uint16
+	Ifindex    int
 }
 
 // Finding is one triage result. Rule names are stable identifiers.

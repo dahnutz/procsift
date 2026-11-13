@@ -67,7 +67,7 @@ func Collect(opts Options) (*model.Snapshot, error) {
 		"This scan reads kernel-exported views under /proc and /sys. It does not walk raw physical RAM.",
 		"A rootkit that hooks directory listing, /proc lookup, and kill(pid, 0) can still hide a task.",
 		"At most 16 bytes are read from the start of an anonymous executable mapping, and only to recognize an ELF, PE, or script header. Process memory is not dumped.",
-		"Command lines stored in this report are redacted when an argument looks like a token, password, or key. Reports can still contain paths and process names.",
+		"Command lines stored in this report are redacted when an argument looks like a token, password, key, credential header, or URL password. Redaction is heuristic: a secret in an unrecognized form can remain. Reports can still contain paths, hosts, ports, user names, and process names.",
 		"A deleted running executable is read only to hash at most 4 MiB through /proc/pid/exe. That digest is a prefix unless the whole file fit in the cap. The bytes are not executed.",
 		"Package integrity checks bounded live root images and selected on-disk utilities even when idle, at most 32 MiB per image or file. The local dpkg database is a reference, not proof that the database is trustworthy. RPM databases are not read.",
 		"maintenance corroborated requires a dpkg transaction after process start and a current file whose MD5 matches the package manifest. A newer mtime alone is not enough.",

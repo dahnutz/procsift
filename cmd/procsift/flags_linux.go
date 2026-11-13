@@ -200,7 +200,8 @@ Exit status:
   2  the scan could not run
 
 diff exits 1 for new medium or high host findings or a changed image. One-snapshot
-processes and sockets are observations. Different hosts, boots, or scan scopes return 2.
+processes and sockets are observations. Different hosts, boots, versions, or scan scopes
+return 2.
 
 Run as root to read other users' file descriptors and executable headers.
 `, version)
