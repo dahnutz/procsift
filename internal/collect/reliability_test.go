@@ -228,3 +228,29 @@ func TestSweepBudgets(t *testing.T) {
 		t.Fatalf("result=%+v", result)
 	}
 }
+
+func TestDevShmUnreadableFileKeepsMetadata(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses the permission check this test relies on")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "stage.bin")
+	if err := os.WriteFile(path, []byte("\x7fELF"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Execute-only: the mode marks it executable but it cannot be opened for reading.
+	if err := os.Chmod(path, 0o100); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+	files, issues, err := readDevShm(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Name != "stage.bin" || !files[0].Executable || files[0].Magic != "" || files[0].Size != 4 {
+		t.Fatalf("files %+v", files)
+	}
+	if len(issues) != 1 || issues[0].State != "denied" {
+		t.Fatalf("issues %+v", issues)
+	}
+}
