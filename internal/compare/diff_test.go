@@ -16,9 +16,19 @@ func comparable(rep model.Report) model.Report {
 	return rep
 }
 
-func TestDiffKeepsIdentityAndVersionSeparate(t *testing.T) {
+func TestDiffRefusesDifferentVersions(t *testing.T) {
+	older := comparable(model.Report{Version: "0.5.2", Host: model.HostInfo{BootID: "boot"}})
+	newer := comparable(model.Report{Version: "0.5.3", Host: model.HostInfo{BootID: "boot"},
+		Findings: []model.Finding{{Rule: "NET-RAW-SOCKET", Subject: "unowned", Severity: model.SevMedium}}})
+	got := Diff(older, newer)
+	if got.ScopeIssue == "" || got.HostEvidence != 0 || got.VersionNote == "" {
+		t.Fatalf("cross-version comparison was accepted: %+v", got)
+	}
+}
+
+func TestOneSnapshotSocketIsObservation(t *testing.T) {
 	older := model.Report{
-		Version: "0.4.0",
+		Version: "0.5.2",
 		Host:    model.HostInfo{BootID: "boot"},
 		Processes: []model.ProcessView{
 			proc(4, 100, "aaa", "full"),
@@ -26,26 +36,13 @@ func TestDiffKeepsIdentityAndVersionSeparate(t *testing.T) {
 		Sockets: []model.SocketView{{Proto: "tcp", Local: "10.0.0.1:1", Remote: "10.0.0.2:2", State: "ESTABLISHED", Inode: 9}},
 	}
 	newer := older
-	newer.Version = "0.5.0"
 	newer.Processes = []model.ProcessView{proc(4, 100, "aaa", "full")}
 	newer.Sockets = append([]model.SocketView{}, older.Sockets...)
 	newer.Sockets = append(newer.Sockets, model.SocketView{Proto: "tcp", Local: "10.0.0.1:1", Remote: "10.0.0.9:9", State: "ESTABLISHED", Inode: 11})
 	newer.Findings = []model.Finding{{Rule: "NET-METADATA", PID: 4, Severity: model.SevLow}}
 	got := Diff(comparable(older), comparable(newer))
-	if got.HostEvidence != 0 || len(got.SocketChanges) != 1 || got.SocketChanges[0].Kind != "observed" {
+	if got.ScopeIssue != "" || got.HostEvidence != 0 || len(got.SocketChanges) != 1 || got.SocketChanges[0].Kind != "observed" {
 		t.Fatalf("a one-snapshot socket should remain an observation: %+v", got)
-	}
-	var rule bool
-	for _, change := range got.FindingChanges {
-		if change.Kind == "new-rule" {
-			rule = true
-		}
-		if change.Kind == "host-evidence" && change.Subject == "NET-METADATA pid 4 " {
-			t.Fatalf("new rule counted as host evidence: %+v", change)
-		}
-	}
-	if !rule {
-		t.Fatalf("missing new-rule: %+v", got.FindingChanges)
 	}
 }
 
@@ -134,6 +131,12 @@ func TestDiffRefusesMismatchedScanScope(t *testing.T) {
 		{"magic", func(r *model.Report) { r.ScanOptions.ReadMagic = false }},
 		{"manifest", func(r *model.Report) { r.ScanOptions.Manifest = "/tmp/reference"; r.ScanOptions.ManifestSHA256 = "abc" }},
 		{"missing options", func(r *model.Report) { r.ScanOptions = nil }},
+		{"sweep", func(r *model.Report) { r.ScanOptions.Sweep = true }},
+		{"sweep budget", func(r *model.Report) { r.ScanOptions.SweepMaxProbes = 9 }},
+		{"sweep timeout", func(r *model.Report) { r.ScanOptions.SweepTimeout = "9s" }},
+		{"pid max flag", func(r *model.Report) { r.ScanOptions.PIDMax = 4096 }},
+		{"unknown min severity", func(r *model.Report) { r.MinSeverity = "" }},
+		{"manifest not identified", func(r *model.Report) { r.ScanOptions.Manifest = "/tmp/reference" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			newer := base
@@ -145,5 +148,17 @@ func TestDiffRefusesMismatchedScanScope(t *testing.T) {
 				t.Fatalf("unsafe comparison: %+v", got)
 			}
 		})
+	}
+}
+
+func TestDiffRefusesDifferentProbedPIDSpace(t *testing.T) {
+	older := comparable(model.Report{Host: model.HostInfo{BootID: "boot", PIDMax: 32768}})
+	older.ScanOptions.Sweep = true
+	newer := older
+	scope := *older.ScanOptions
+	newer.ScanOptions = &scope
+	newer.Host.PIDMax = 4194304
+	if got := Diff(older, newer); got.ScopeIssue == "" || got.HostEvidence != 0 {
+		t.Fatalf("different PID spaces compared: %+v", got)
 	}
 }
