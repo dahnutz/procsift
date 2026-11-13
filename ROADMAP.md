@@ -9,6 +9,8 @@ For usage, see [README.md](README.md) and [FIRST_SCAN.md](FIRST_SCAN.md). [PROPO
 - The text report shows control characters from process names, paths and command lines as `\xNN` or `\uNNNN` escapes, so host data cannot send terminal escape sequences. Newlines are kept for the report layout. JSON output is unchanged.
 - The `-manifest` file, `/proc/<pid>/exe` images and `/dev/shm` entries are opened without blocking and must be regular files. A FIFO or device passed as `-manifest` no longer hangs the scan. Symlinks are still refused in `/dev/shm` and followed for the operator's manifest and for magic links.
 - `NET-RAW-SOCKET` says when a packet socket captures all protocols (`ETH_P_ALL`). It becomes medium when such a socket has no owner in a complete descriptor census. When the census is incomplete or the scan uses `-pid`, it stays low and says the owner is unknown.
+- Every socket table shares one 32 MiB read cap and a 65536-row cap per table. A large TCP inventory no longer pushes raw and packet sockets out of the scan. A table with rows that cannot be parsed is reported as unrecognized instead of read as empty.
+- Late-thread checks stop reading once eight late threads are recorded, and a thread that exits during the walk is not reported as a coverage gap.
 
 ## 0.5.2 — collection and capture
 

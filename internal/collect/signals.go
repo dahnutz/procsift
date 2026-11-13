@@ -150,28 +150,17 @@ func (c *collector) noteRPM() {
 func (c *collector) readRawSockets() {
 	for _, name := range []string{"raw", "raw6", "packet"} {
 		path := filepath.Join(c.proc, "net", name)
-		body, err := readLimited(path, 1<<20)
-		if err != nil {
-			c.issue(path, err)
-			if !errors.Is(err, errTruncated) {
-				continue
+		proto := name
+		rows, _ := c.readSocketTable(path, func(body string) []model.Socket {
+			if proto != "packet" {
+				return procfs.ParseNet(proto, body)
 			}
-			body = completeLines(body)
-		}
-		var rows []model.Socket
-		if name == "packet" {
-			var malformed int
-			rows, malformed = procfs.ParsePacket(string(body))
+			rows, malformed := procfs.ParsePacket(body)
 			if malformed > 0 {
 				c.snap.Coverage = append(c.snap.Coverage, model.ReadIssue{Source: path, State: "error", Detail: "packet socket table contained " + strconv.Itoa(malformed) + " unparsed rows"})
 			}
-		} else {
-			rows = procfs.ParseNet(name, string(body))
-		}
-		if len(c.snap.Sockets)+len(rows) > 8000 {
-			c.snap.Limits = append(c.snap.Limits, "Raw and packet socket reads stopped at the socket cap.")
-			break
-		}
+			return rows
+		})
 		c.snap.Sockets = append(c.snap.Sockets, rows...)
 	}
 }
@@ -200,12 +189,16 @@ func (c *collector) noteLateThreads() {
 			entries = entries[:maxThreads]
 		}
 		for _, e := range entries {
+			if len(p.LateThreads) >= 8 {
+				break
+			}
 			tid, err := strconv.Atoi(e.Name())
 			if err != nil || tid == p.PID {
 				continue
 			}
 			body, err := readLimited(filepath.Join(dir, e.Name(), "stat"), 1<<16)
-			if err != nil {
+			// A thread that exited after the directory listing is not a gap.
+			if err != nil && !processGone(filepath.Join(dir, e.Name()), err) {
 				c.issue(filepath.Join(dir, e.Name(), "stat"), err)
 			}
 			if !usablePrefix(err) {
@@ -216,9 +209,6 @@ func (c *collector) noteLateThreads() {
 				continue
 			}
 			comm := threadComm(string(body))
-			if len(p.LateThreads) >= 8 {
-				break
-			}
 			late := ticks > p.StartTicks && ticks-p.StartTicks >= 6000
 			disguised := kernelStyleComm(comm) && !p.Kernel()
 			if late || disguised {
