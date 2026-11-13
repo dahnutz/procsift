@@ -26,7 +26,10 @@ func RedactCmdline(s string) string {
 	}
 	parts := strings.Fields(s)
 	client := strings.ToLower(filepath.Base(parts[0]))
-	mysqlPassword := strings.HasPrefix(client, "mysql") || strings.HasPrefix(client, "mariadb")
+	// -p means a password only for some clients. Elsewhere it is a port
+	// (nc, ssh) or an unrelated flag (find -print, gcc -pthread).
+	attachedP := strings.HasPrefix(client, "mysql") || strings.HasPrefix(client, "mariadb") || client == "sshpass"
+	separateP := client == "sshpass"
 	for i := 0; i < len(parts); i++ {
 		p := parts[i]
 		if strings.HasPrefix(strings.ToLower(p), "authorization:") {
@@ -43,8 +46,13 @@ func RedactCmdline(s string) string {
 			parts[i] = p[:eq+1] + "[redacted]"
 			continue
 		}
-		if strings.HasPrefix(p, "-p") && len(p) > 2 && (mysqlPassword || hasNonDigit(p[2:])) {
+		if attachedP && strings.HasPrefix(p, "-p") && len(p) > 2 {
 			parts[i] = "-p[redacted]"
+			continue
+		}
+		if separateP && p == "-p" && i+1 < len(parts) {
+			i++
+			parts[i] = "[redacted]"
 			continue
 		}
 		if strings.HasPrefix(p, "-") && sensitiveKey(p) && i+1 < len(parts) && !strings.HasPrefix(parts[i+1], "-") {
@@ -53,15 +61,6 @@ func RedactCmdline(s string) string {
 		}
 	}
 	return urlCredentials.ReplaceAllString(strings.Join(parts, " "), "${1}[redacted]@")
-}
-
-func hasNonDigit(s string) bool {
-	for _, ch := range s {
-		if ch < '0' || ch > '9' {
-			return true
-		}
-	}
-	return false
 }
 
 func sensitiveKey(arg string) bool {

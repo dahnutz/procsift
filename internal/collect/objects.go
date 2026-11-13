@@ -4,7 +4,6 @@ package collect
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -108,7 +107,13 @@ func readDevShm(dir string) ([]model.DevShmFile, []model.ReadIssue, error) {
 			issues = append(issues, model.ReadIssue{Source: path, State: readState(err), Detail: err.Error()})
 		}
 		if opened == nil {
-			continue
+			if errors.Is(err, errDevShmNotRegular) {
+				continue
+			}
+			// The file could not be opened (for example, another user's file
+			// without root). Keep the directory metadata so the mode bits still
+			// reach the analyzer; only the magic is unknown.
+			opened = info
 		}
 		out = append(out, model.DevShmFile{
 			Name:       e.Name(),
@@ -119,6 +124,8 @@ func readDevShm(dir string) ([]model.DevShmFile, []model.ReadIssue, error) {
 	}
 	return out, issues, nil
 }
+
+var errDevShmNotRegular = errors.New("entry was not regular after opening")
 
 func inspectDevShm(path string) (os.FileInfo, string, error) {
 	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
@@ -132,7 +139,7 @@ func inspectDevShm(path string) (os.FileInfo, string, error) {
 		return nil, "", err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, "", fmt.Errorf("entry was not regular after opening")
+		return nil, "", errDevShmNotRegular
 	}
 	buf := make([]byte, 4)
 	n, err := f.Read(buf)

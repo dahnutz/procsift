@@ -62,11 +62,12 @@ func (c *collector) enrichContext() {
 	}
 	manifests, manOK, manTrunc := explain.FindManifests(c.hostRoot, pkgPaths)
 	if c.manifest != "" {
-		local, err := explain.LoadTrustManifest(c.manifest)
+		local, digest, err := explain.LoadTrustManifest(c.manifest)
 		if err != nil {
 			c.snap.Limits = append(c.snap.Limits, "Local supplied manifest was not applied: "+err.Error())
 		} else {
 			c.trusted = local
+			c.snap.ManifestSHA256 = digest
 			for path, sum := range local {
 				manifests[path] = sum
 			}

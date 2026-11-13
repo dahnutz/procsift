@@ -89,6 +89,10 @@ type Snapshot struct {
 	// ExtraUID0 lists uid 0 account names other than root. Password fields are never copied.
 	ExtraUID0 []string
 
+	// ManifestSHA256 identifies the -manifest bytes that were applied.
+	// It is empty when no manifest was supplied or it was not applied.
+	ManifestSHA256 string
+
 	PreloadPaths     []string
 	PreloadTruncated bool
 	BPFPins          []string
