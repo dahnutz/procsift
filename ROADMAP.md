@@ -12,6 +12,7 @@ For usage, see [README.md](README.md) and [FIRST_SCAN.md](FIRST_SCAN.md). [PROPO
 - Every socket table shares one 32 MiB read cap and a 65536-row cap per table. A large TCP inventory no longer pushes raw and packet sockets out of the scan. A table with rows that cannot be parsed is reported as unrecognized instead of read as empty.
 - Late-thread checks stop reading once eight late threads are recorded, and a thread that exits during the walk is not reported as a coverage gap.
 - A process environment over the 1 MiB read cap produces `PROC-ENV-OVERSIZE` (low): the loader-variable check is inconclusive because a variable can sit past the cap. Memory findings from a process whose `maps` exceeded 8 MiB say the region list is partial.
+- Command-line redaction also hides the token after `Bearer`, `Basic`, `Token` or `Digest`, credential headers such as `X-Api-Key:` or `--header=Authorization:`, `curl -u` passwords, and token-like URL user names. URL passwords are hidden up to the last `@`, and the URL user is kept.
 
 ## 0.5.2 — collection and capture
 
