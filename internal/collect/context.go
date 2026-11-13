@@ -217,6 +217,7 @@ func (c *collector) recheck(pid int) (ticks, dev, ino uint64, gotPID int, ok boo
 		return 0, 0, 0, 0, false
 	}
 	b, err := readLimited(filepath.Join(base, "stat"), 1<<16)
+	// An identity recheck must not pass on a partial stat line.
 	if err != nil {
 		return 0, 0, 0, st.PID, false
 	}

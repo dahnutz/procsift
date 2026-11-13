@@ -130,11 +130,18 @@ type Process struct {
 	Listed       bool
 	MapsOK       bool
 	Maps         []Region
+	// MapsTruncated means maps exceeded its read cap; Maps holds the
+	// complete regions before the cut, and later regions were not checked.
+	MapsTruncated bool
 
 	LDPreload string
 	LDAudit   string
 	LDLibrary string
-	TracerPID int
+	// EnvTruncated means environ exceeded its read cap. Loader variables
+	// were looked for only in the prefix; the process orders its own
+	// environment, so one can sit past the cap.
+	EnvTruncated bool
+	TracerPID    int
 
 	NetNS      string
 	FDComplete bool

@@ -111,7 +111,7 @@ func TestTruncatedMapsKeepCompleteRegions(t *testing.T) {
 	c := &collector{snap: &model.Snapshot{}}
 	p := model.Process{PID: 42}
 	c.readMaps(&p, base)
-	if !p.MapsOK || len(p.Maps) != 1 || p.Maps[0].Path != "/tmp/payload (deleted)" || len(c.snap.Coverage) != 1 || c.snap.Coverage[0].State != "truncated" {
+	if !p.MapsOK || !p.MapsTruncated || len(p.Maps) != 1 || p.Maps[0].Path != "/tmp/payload (deleted)" || len(c.snap.Coverage) != 1 || c.snap.Coverage[0].State != "truncated" {
 		t.Fatalf("maps=%+v coverage=%+v", p.Maps, c.snap.Coverage)
 	}
 }
@@ -135,7 +135,7 @@ func TestTruncatedEnvironmentKeepsLoaderVariable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.LDPreload != "/tmp/libx.so" {
+	if p.LDPreload != "/tmp/libx.so" || !p.EnvTruncated {
 		t.Fatalf("preload %q", p.LDPreload)
 	}
 	found := false

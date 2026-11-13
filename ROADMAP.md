@@ -11,6 +11,7 @@ For usage, see [README.md](README.md) and [FIRST_SCAN.md](FIRST_SCAN.md). [PROPO
 - `NET-RAW-SOCKET` says when a packet socket captures all protocols (`ETH_P_ALL`). It becomes medium when such a socket has no owner in a complete descriptor census. When the census is incomplete or the scan uses `-pid`, it stays low and says the owner is unknown.
 - Every socket table shares one 32 MiB read cap and a 65536-row cap per table. A large TCP inventory no longer pushes raw and packet sockets out of the scan. A table with rows that cannot be parsed is reported as unrecognized instead of read as empty.
 - Late-thread checks stop reading once eight late threads are recorded, and a thread that exits during the walk is not reported as a coverage gap.
+- A process environment over the 1 MiB read cap produces `PROC-ENV-OVERSIZE` (low): the loader-variable check is inconclusive because a variable can sit past the cap. Memory findings from a process whose `maps` exceeded 8 MiB say the region list is partial.
 
 ## 0.5.2 — collection and capture
 

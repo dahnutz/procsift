@@ -22,7 +22,7 @@ func Analyze(s *model.Snapshot) []model.Finding {
 	for i := range s.Processes {
 		p := &s.Processes[i]
 		out = append(out, processFindings(p)...)
-		out = append(out, memoryFindings(p)...)
+		out = append(out, partialMaps(p, memoryFindings(p))...)
 		out = append(out, imageFindings(p)...)
 		out = append(out, contextFindings(s, p)...)
 		out = append(out, processSignalFindings(s, p)...)

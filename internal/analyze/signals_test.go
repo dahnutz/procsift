@@ -140,3 +140,37 @@ func TestRawRowCapKeepsMediumPacketSocket(t *testing.T) {
 		t.Fatalf("medium %d of %d findings: %+v", medium, len(got), got)
 	}
 }
+
+func TestOversizeEnvironmentIsInconclusive(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		p    model.Process
+		want string
+	}{
+		{"variable after the cap", model.Process{PID: 9, Name: "app", EnvTruncated: true}, "looked for only in the first 1 MiB"},
+		{"variable inside the prefix", model.Process{PID: 9, Name: "app", EnvTruncated: true, LDPreload: "/tmp/x.so"}, "found in the first 1 MiB"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := envOversizeFinding(&tc.p)
+			if len(got) != 1 || got[0].Rule != "PROC-ENV-OVERSIZE" || got[0].Severity != model.SevLow || !strings.Contains(got[0].Evidence[0], tc.want) {
+				t.Fatalf("findings %+v", got)
+			}
+		})
+	}
+	if got := envOversizeFinding(&model.Process{PID: 9}); len(got) != 0 {
+		t.Fatalf("complete environment produced %+v", got)
+	}
+}
+
+func TestTruncatedMapsMarkMemoryFindings(t *testing.T) {
+	p := model.Process{PID: 9, Name: "app", MapsOK: true, MapsTruncated: true,
+		Maps: []model.Region{{Start: 1, End: 2, Perms: "rwxp", Path: ""}}}
+	got := partialMaps(&p, []model.Finding{{Rule: "MEM-WX-ANON", PID: 9}})
+	if !strings.Contains(strings.Join(got[0].Evidence, "\n"), "region list is partial") {
+		t.Fatalf("findings %+v", got)
+	}
+	p.MapsTruncated = false
+	if got := partialMaps(&p, []model.Finding{{Rule: "MEM-WX-ANON", PID: 9}}); len(got[0].Evidence) != 0 {
+		t.Fatalf("complete maps marked partial: %+v", got)
+	}
+}

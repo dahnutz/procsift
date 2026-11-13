@@ -55,7 +55,37 @@ func processSignalFindings(s *model.Snapshot, p *model.Process) []model.Finding 
 	out = append(out, unownedLibFinding(p)...)
 	out = append(out, namespaceFindings(p)...)
 	out = append(out, pageFindings(p)...)
+	out = append(out, envOversizeFinding(p)...)
 	return out
+}
+
+// partialMaps marks memory findings from a process whose region list was cut
+// at the read cap, so the report says later regions were not checked.
+func partialMaps(p *model.Process, findings []model.Finding) []model.Finding {
+	if !p.MapsTruncated {
+		return findings
+	}
+	for i := range findings {
+		findings[i].Evidence = append(findings[i].Evidence, "region list is partial: maps exceeded the 8 MiB read cap")
+	}
+	return findings
+}
+
+func envOversizeFinding(p *model.Process) []model.Finding {
+	if !p.EnvTruncated {
+		return nil
+	}
+	ev := "LD_PRELOAD, LD_AUDIT and LD_LIBRARY_PATH were looked for only in the first 1 MiB"
+	if p.LDPreload != "" || p.LDAudit != "" || p.LDLibrary != "" {
+		ev = "a loader variable was found in the first 1 MiB; later entries were not inspected"
+	}
+	return []model.Finding{{
+		Rule: "PROC-ENV-OVERSIZE", Severity: model.SevLow, Category: "process",
+		PID: p.PID, Process: p.Name,
+		Summary:  "process environment exceeds the 1 MiB read limit",
+		Detail:   "The loader-variable check is inconclusive for this process: a process sets the order of its own environment, so a variable can sit past the cap. Large build, CI or container environments can also exceed it. Only loader variables are kept; other values were not copied.",
+		Evidence: []string{ev},
+	}}
 }
 
 func shellFinding(s *model.Snapshot, p *model.Process) []model.Finding {
