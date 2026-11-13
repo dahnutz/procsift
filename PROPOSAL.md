@@ -18,6 +18,7 @@ ProcSift reads Linux interfaces directly. It does not depend on `ps`, `ss`, `net
 | `/proc/sysvipc/shm` and `/dev/shm` | Shared-memory inventory |
 | Startup files and generated systemd units | Configuration references to selected processes |
 | Local package records | Ownership and manifest comparisons for selected images and utilities |
+| `/etc/ld.so.preload` | Listed libraries; stat only (existence, mode) and dpkg ownership of each, never opened |
 
 A bounded 16-byte read of an anonymous executable mapping can identify an ELF, PE, or script header. `-no-magic` disables that read. The default scan does not sweep PID space or compare mapped page bytes with backing files.
 

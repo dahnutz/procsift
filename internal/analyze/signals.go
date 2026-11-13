@@ -1,25 +1,80 @@
 package analyze
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dahnutz/procsift/internal/model"
 )
 
+// preloadFinding reports /etc/ld.so.preload. Any entry is medium, because a
+// system-wide preload loads into every dynamically linked process. It is high
+// when a listed library sits in a temporary path, is world-writable, or exists
+// but no package lists it. A missing library stays medium: the loader prints
+// an error and continues.
+func preloadFinding(s *model.Snapshot) model.Finding {
+	f := model.Finding{
+		Rule: "HOST-LD-PRELOAD", Severity: model.SevMedium, Category: "process",
+		Summary: "ld.so.preload contains entries or exceeds the read limit",
+		Detail:  "Every dynamically linked program loads the listed libraries. Some EDR agents, memory allocators (jemalloc, tcmalloc), and debugging or time-shifting shims are installed this way; a stock system usually has no such file. A listed library that does not exist only makes the loader print an error. The file was read only to list paths, at most 4 KiB, and no listed library was opened. This is separate from LD_PRELOAD in a process environment.",
+	}
+	if pf := s.PreloadFile; pf != nil {
+		line := fmt.Sprintf("file %d bytes, mode %s, owner uid %d, modified %s", pf.Size, pf.Mode, pf.UID, pf.ModTime.Format(time.RFC3339))
+		if pf.Package != "" {
+			line += ", listed by dpkg package " + pf.Package
+		}
+		f.Evidence = append(f.Evidence, line)
+	}
+	high := false
+	for i, path := range s.PreloadPaths {
+		line := path
+		if i < len(s.PreloadEntries) && s.PreloadEntries[i].Path == path {
+			e := s.PreloadEntries[i]
+			var notes []string
+			if e.Temp {
+				notes = append(notes, "temporary path")
+				high = true
+			}
+			if e.WorldWritable {
+				notes = append(notes, "world-writable")
+				high = true
+			}
+			if e.Missing {
+				notes = append(notes, "file does not exist")
+			}
+			switch e.Ownership {
+			case "packaged":
+				notes = append(notes, "dpkg package "+e.Package)
+			case "unpackaged":
+				notes = append(notes, "not listed by any dpkg package")
+				high = true
+			default:
+				if !e.Missing {
+					notes = append(notes, "package ownership unknown")
+				}
+			}
+			if len(notes) > 0 {
+				line += ": " + strings.Join(notes, ", ")
+			}
+		}
+		f.Evidence = append(f.Evidence, line)
+	}
+	if s.PreloadTruncated {
+		f.Evidence = append(f.Evidence, "ld.so.preload exceeds the 4 KiB read limit; the listing is partial")
+	}
+	if high {
+		f.Severity = model.SevHigh
+		f.Summary = "ld.so.preload names a library in a temporary, writable, or unpackaged location"
+	}
+	return f
+}
+
 func hostFindings(s *model.Snapshot) []model.Finding {
 	var out []model.Finding
 	if len(s.PreloadPaths) > 0 || s.PreloadTruncated {
-		ev := append([]string(nil), s.PreloadPaths...)
-		if s.PreloadTruncated {
-			ev = append(ev, "ld.so.preload exceeds the 4 KiB read limit; remaining entries were not inspected")
-		}
-		out = append(out, model.Finding{
-			Rule: "HOST-LD-PRELOAD", Severity: model.SevMedium, Category: "process",
-			Summary:  "ld.so.preload contains entries or exceeds the read limit",
-			Detail:   "The file was read only to list paths, at most 4 KiB. A preload path is an observation. This is separate from LD_PRELOAD in a process environment.",
-			Evidence: ev,
-		})
+		out = append(out, preloadFinding(s))
 	}
 	if s.BPFUnprivileged == "enabled" {
 		out = append(out, model.Finding{

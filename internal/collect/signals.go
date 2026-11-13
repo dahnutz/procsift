@@ -4,10 +4,12 @@ package collect
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/dahnutz/procsift/internal/explain"
 	"github.com/dahnutz/procsift/internal/model"
@@ -49,8 +51,89 @@ func (c *collector) readPreload() {
 		}
 		c.snap.PreloadPaths = append(c.snap.PreloadPaths, name)
 	}
+	if len(c.snap.PreloadPaths) > 0 || c.snap.PreloadTruncated {
+		c.describePreload(path)
+	}
 }
 
+// describePreload records facts about /etc/ld.so.preload and each library it
+// names: package ownership, temporary location, absence, and world-writable
+// mode. Nothing named in the file is opened or loaded; only stat is used.
+func (c *collector) describePreload(path string) {
+	var queries []string
+	if info, err := os.Stat(path); err == nil {
+		pf := &model.PreloadFile{Size: info.Size(), Mode: fmt.Sprintf("%04o", info.Mode().Perm()), UID: -1, ModTime: info.ModTime().UTC()}
+		if st, ok := info.Sys().(*syscall.Stat_t); ok {
+			pf.UID = int(st.Uid)
+		}
+		c.snap.PreloadFile = pf
+		queries = append(queries, "/etc/ld.so.preload")
+	}
+	for _, name := range c.snap.PreloadPaths {
+		e := model.PreloadEntry{Path: name, Ownership: "unknown", Temp: tempPath(name)}
+		if strings.HasPrefix(name, "/") {
+			host := explainPath(c.hostRoot, name)
+			info, err := os.Stat(host)
+			switch {
+			case err == nil:
+				e.WorldWritable = info.Mode().Perm()&0o002 != 0
+			case errors.Is(err, os.ErrNotExist):
+				e.Missing = true
+			default:
+				c.issue(host, err)
+			}
+			queries = append(queries, usrMergeAliases(name)...)
+		}
+		c.snap.PreloadEntries = append(c.snap.PreloadEntries, e)
+	}
+	owned, dbOK, truncated := explain.FindPackages(c.hostRoot, queries)
+	if !dbOK {
+		c.snap.Coverage = append(c.snap.Coverage, model.ReadIssue{Source: explainPath(c.hostRoot, "/var/lib/dpkg/info"), State: "unavailable", Detail: "dpkg file lists were not readable; ld.so.preload ownership is inconclusive"})
+		return
+	}
+	if c.snap.PreloadFile != nil {
+		c.snap.PreloadFile.Package = owned["/etc/ld.so.preload"]
+	}
+	for i := range c.snap.PreloadEntries {
+		e := &c.snap.PreloadEntries[i]
+		if !strings.HasPrefix(e.Path, "/") {
+			continue
+		}
+		for _, alias := range usrMergeAliases(e.Path) {
+			if pkg := owned[alias]; pkg != "" {
+				e.Package, e.Ownership = pkg, "packaged"
+				break
+			}
+		}
+		if e.Ownership == "unknown" && !truncated && !e.Missing {
+			e.Ownership = "unpackaged"
+		}
+	}
+	if truncated {
+		c.snap.Limits = append(c.snap.Limits, "Package-file search for ld.so.preload entries stopped at its read budget; unlisted entries are inconclusive.")
+	}
+}
+
+// usrMergeAliases returns a path and its merged-/usr twin, because dpkg may
+// list a library under either spelling (/lib/x.so and /usr/lib/x.so).
+func usrMergeAliases(p string) []string {
+	out := []string{p}
+	for _, dir := range []string{"/lib/", "/lib32/", "/lib64/", "/libx32/", "/bin/", "/sbin/"} {
+		if strings.HasPrefix(p, dir) {
+			return append(out, "/usr"+p)
+		}
+		if strings.HasPrefix(p, "/usr"+dir) {
+			return append(out, strings.TrimPrefix(p, "/usr"))
+		}
+	}
+	return out
+}
+
+// parsePreloadPaths tokenizes ld.so.preload the way glibc's loader does.
+// glibc 2.42 elf/rtld.c (dl_main) first blanks every "#" through the end of
+// its line ("Eliminate comments"), then splits with strsep on ": \t\n" and
+// skips empty names. A final name without a trailing separator still loads.
+// musl does not read this file.
 func parsePreloadPaths(text string) []string {
 	var clean strings.Builder
 	for _, line := range strings.Split(text, "\n") {

@@ -13,6 +13,7 @@ For usage, see [README.md](README.md) and [FIRST_SCAN.md](FIRST_SCAN.md). [PROPO
 - Late-thread checks stop reading once eight late threads are recorded, and a thread that exits during the walk is not reported as a coverage gap.
 - A process environment over the 1 MiB read cap produces `PROC-ENV-OVERSIZE` (low): the loader-variable check is inconclusive because a variable can sit past the cap. Memory findings from a process whose `maps` exceeded 8 MiB say the region list is partial.
 - Command-line redaction also hides the token after `Bearer`, `Basic`, `Token` or `Digest`, credential headers such as `X-Api-Key:` or `--header=Authorization:`, `curl -u` passwords, and token-like URL user names. URL passwords are hidden up to the last `@`, and the URL user is kept.
+- `HOST-LD-PRELOAD` records the file's size, mode, owner, and time, and the package, location, and mode of each listed library. It becomes high when a library is in a temporary path, world-writable, or exists but no dpkg package lists it; a missing library stays medium. The parser's glibc behavior is checked against glibc 2.42 `elf/rtld.c`.
 
 ## 0.5.2 — collection and capture
 

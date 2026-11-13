@@ -77,6 +77,7 @@ The directory must be new. The bundle's `manifest.json` says whether the executa
 | `PROC-FILE-MATCH` | Does a running image have the **same full hash** as a changed utility? This links bytes, not intent or installation history. |
 | `PROC-PKG-OTHER-SOURCE` | Is the process on an observed Snap mount? That explains why dpkg does not list it; it does not verify the Snap image. |
 | `PROC-CONTEXT-DISGUISE` | Which path, command title, package, and service facts disagree? A familiar name by itself is not enough. |
+| `HOST-LD-PRELOAD` | Who created `/etc/ld.so.preload`, and does an installed agent or allocator explain each listed library? High means a library is in a temporary path, world-writable, or not listed by any package. Check the file's owner and time against package and admin activity; do not run tools that the preload would load into to inspect it. |
 | `NET-RAW-SOCKET` at medium | Which process held the socket? None of the descriptors read from visible processes refers to it. Rerun with the same privileges to check whether it persists, and compare against the processes that exited during the scan. Kernel-held sockets and short-lived capture tools can explain it. |
 | A coverage entry marked `denied`, `truncated`, or `unavailable` | Which conclusion depends on the missing read? Keep that limit in the case notes. |
 
