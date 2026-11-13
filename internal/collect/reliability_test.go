@@ -254,3 +254,41 @@ func TestDevShmUnreadableFileKeepsMetadata(t *testing.T) {
 		t.Fatalf("issues %+v", issues)
 	}
 }
+
+func TestManifestOpenFollowsSymlinkAndRefusesFIFO(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	body := "d41d8cd98f00b204e9800998ecf8427e  /bin/true\n"
+	if err := os.WriteFile(real, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	got, digest, err := loadManifest(link)
+	if err != nil || len(got) != 1 || digest == "" {
+		t.Fatalf("symlinked manifest: got %v digest %q err %v", got, digest, err)
+	}
+	fifo := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, digest, err := loadManifest(fifo)
+		if err == nil || digest != "" {
+			done <- errors.New("FIFO manifest was accepted")
+			return
+		}
+		done <- nil
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("FIFO manifest blocked the scan")
+	}
+}

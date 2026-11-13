@@ -8,10 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"syscall"
 
 	"github.com/dahnutz/procsift/internal/model"
 	"github.com/dahnutz/procsift/internal/procfs"
+	"github.com/dahnutz/procsift/internal/safeio"
 )
 
 func (c *collector) loadObjects() {
@@ -107,7 +107,7 @@ func readDevShm(dir string) ([]model.DevShmFile, []model.ReadIssue, error) {
 			issues = append(issues, model.ReadIssue{Source: path, State: readState(err), Detail: err.Error()})
 		}
 		if opened == nil {
-			if errors.Is(err, errDevShmNotRegular) {
+			if errors.Is(err, safeio.ErrNotRegular) {
 				continue
 			}
 			// The file could not be opened (for example, another user's file
@@ -125,22 +125,12 @@ func readDevShm(dir string) ([]model.DevShmFile, []model.ReadIssue, error) {
 	return out, issues, nil
 }
 
-var errDevShmNotRegular = errors.New("entry was not regular after opening")
-
 func inspectDevShm(path string) (os.FileInfo, string, error) {
-	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	f, info, err := safeio.OpenRegular(path)
 	if err != nil {
 		return nil, "", err
 	}
-	f := os.NewFile(uintptr(fd), path)
 	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, "", err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, "", errDevShmNotRegular
-	}
 	buf := make([]byte, 4)
 	n, err := f.Read(buf)
 	if errors.Is(err, io.EOF) {
