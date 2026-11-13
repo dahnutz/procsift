@@ -1,17 +1,11 @@
-//go:build linux
+//go:build unix
 
-// Package safeio opens files the scanner reads without letting a path that
-// someone else controls hang the scan or redirect it.
 package safeio
 
 import (
-	"errors"
 	"os"
 	"syscall"
 )
-
-// ErrNotRegular reports that the opened descriptor was not a regular file.
-var ErrNotRegular = errors.New("not a regular file")
 
 // OpenRegular opens path read-only without following a final symlink and
 // without blocking, then checks on the descriptor that it is a regular file.

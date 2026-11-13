@@ -385,8 +385,10 @@ func killExists(pid int) bool {
 	return err == nil || err == syscall.EPERM
 }
 
+// readLimited reads at most max bytes. It is used for /proc, /sys and
+// root-owned host files; O_NONBLOCK still keeps a FIFO from stalling the scan.
 func readLimited(path string, max int) ([]byte, error) {
-	f, err := os.Open(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
 	}

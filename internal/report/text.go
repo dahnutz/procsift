@@ -72,6 +72,9 @@ func writeText(w io.Writer, rep model.Report) error {
 	row(&b, "writable+executable", rep.Objects.WritableExecutable)
 	fmt.Fprintf(&b, "  %-26s %d (%d bytes)\n", "sysv shared segments", rep.Objects.SysVSegments, rep.Objects.SysVBytes)
 	row(&b, "/dev/shm files", rep.Objects.DevShmFiles)
+	if rep.Objects.DevShmSpecial > 0 {
+		row(&b, "/dev/shm special entries", rep.Objects.DevShmSpecial)
+	}
 	row(&b, "loaded kernel modules", rep.Objects.KernelModules)
 	row(&b, "sockets (tcp/udp)", rep.Objects.Sockets)
 	row(&b, "maps unreadable", rep.Objects.MapsUnreadable)

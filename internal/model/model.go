@@ -368,6 +368,11 @@ type DevShmFile struct {
 	Size       int64
 	Executable bool
 	Magic      string
+	// Kind is "file" for a regular file, or "fifo", "socket", "device" or
+	// "symlink". Non-regular entries are listed but never opened.
+	Kind string
+	// Target is the link text of a symlink entry.
+	Target string
 }
 
 // Socket is one row from the kernel's tcp or udp tables.

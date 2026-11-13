@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dahnutz/procsift/internal/analyze"
 	"github.com/dahnutz/procsift/internal/model"
 )
 
@@ -290,5 +291,60 @@ func TestManifestOpenFollowsSymlinkAndRefusesFIFO(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("FIFO manifest blocked the scan")
+	}
+}
+
+func TestDevShmListsSpecialEntriesWithoutOpening(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "stage.bin"), []byte("\x7fELF\x02\x01"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(dir, "pipe"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/dev/zero", filepath.Join(dir, "zero")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "subdir"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		files []model.DevShmFile
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		files, _, err := readDevShm(dir)
+		done <- result{files, err}
+	}()
+	var got result
+	select {
+	case got = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("/dev/shm inventory blocked")
+	}
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	kinds := map[string]model.DevShmFile{}
+	for _, f := range got.files {
+		kinds[f.Name] = f
+	}
+	if len(got.files) != 3 || kinds["stage.bin"].Kind != "file" || kinds["stage.bin"].Magic != "elf" ||
+		kinds["pipe"].Kind != "fifo" || kinds["zero"].Kind != "symlink" || kinds["zero"].Target != "/dev/zero" {
+		t.Fatalf("entries %+v", got.files)
+	}
+	findings := analyze.Analyze(&model.Snapshot{DevShm: got.files})
+	special := 0
+	for _, f := range findings {
+		if f.Rule == "IPC-DEVSHM-SPECIAL" {
+			special++
+		}
+		if f.Rule == "IPC-DEVSHM-FILE" && f.Subject != "stage.bin" {
+			t.Fatalf("special entry raised as a staged file: %+v", f)
+		}
+	}
+	if special != 2 {
+		t.Fatalf("findings %+v", findings)
 	}
 }

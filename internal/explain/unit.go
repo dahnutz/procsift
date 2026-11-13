@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dahnutz/procsift/internal/model"
+	"github.com/dahnutz/procsift/internal/safeio"
 )
 
 // ReadUnit reads a systemd unit and a sibling timer when a service name is known.
@@ -49,8 +50,10 @@ func ReadUnit(root, service string) model.UnitLink {
 	return link
 }
 
+// readUnitText follows symlinks (masked and linked units are symlinks) but
+// reads only a regular file, without blocking.
 func readUnitText(path string) string {
-	f, err := os.Open(path)
+	f, _, err := safeio.OpenRegularFollow(path)
 	if err != nil {
 		return ""
 	}

@@ -94,6 +94,10 @@ func readDevShm(dir string) ([]model.DevShmFile, []model.ReadIssue, error) {
 	}
 	var out []model.DevShmFile
 	var issues []model.ReadIssue
+	if len(ents) > maxDevShmEntries {
+		ents = ents[:maxDevShmEntries]
+		issues = append(issues, model.ReadIssue{Source: dir, State: "truncated", Detail: fmt.Sprintf("/dev/shm listing stopped at %d entries", maxDevShmEntries)})
+	}
 	for _, e := range ents {
 		path := filepath.Join(dir, e.Name())
 		info, err := e.Info()
@@ -102,6 +106,9 @@ func readDevShm(dir string) ([]model.DevShmFile, []model.ReadIssue, error) {
 			continue
 		}
 		if !info.Mode().IsRegular() {
+			if entry, ok := specialDevShm(path, e.Name(), info); ok {
+				out = append(out, entry)
+			}
 			continue
 		}
 		opened, magic, err := inspectDevShm(path)
@@ -110,6 +117,12 @@ func readDevShm(dir string) ([]model.DevShmFile, []model.ReadIssue, error) {
 		}
 		if opened == nil {
 			if errors.Is(err, safeio.ErrNotRegular) {
+				// Replaced after the listing; record what is there now.
+				if now, lerr := os.Lstat(path); lerr == nil {
+					if entry, ok := specialDevShm(path, e.Name(), now); ok {
+						out = append(out, entry)
+					}
+				}
 				continue
 			}
 			// The file could not be opened (for example, another user's file
@@ -122,9 +135,33 @@ func readDevShm(dir string) ([]model.DevShmFile, []model.ReadIssue, error) {
 			Size:       opened.Size(),
 			Executable: opened.Mode().Perm()&0111 != 0,
 			Magic:      magic,
+			Kind:       "file",
 		})
 	}
 	return out, issues, nil
+}
+
+// maxDevShmEntries caps the /dev/shm directory walk.
+const maxDevShmEntries = 4096
+
+// specialDevShm describes a non-regular /dev/shm entry without opening it.
+// Directories are not listed.
+func specialDevShm(path, name string, info os.FileInfo) (model.DevShmFile, bool) {
+	entry := model.DevShmFile{Name: name}
+	switch mode := info.Mode(); {
+	case mode&os.ModeSymlink != 0:
+		entry.Kind = "symlink"
+		entry.Target, _ = os.Readlink(path)
+	case mode&os.ModeNamedPipe != 0:
+		entry.Kind = "fifo"
+	case mode&os.ModeSocket != 0:
+		entry.Kind = "socket"
+	case mode&os.ModeDevice != 0:
+		entry.Kind = "device"
+	default:
+		return entry, false
+	}
+	return entry, true
 }
 
 func inspectDevShm(path string) (os.FileInfo, string, error) {

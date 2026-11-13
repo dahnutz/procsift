@@ -104,7 +104,13 @@ func countObjects(s *model.Snapshot) model.ObjectCounts {
 	o.MapsUnreadable = s.MapsUnreadable
 	o.KernelModules = len(s.Modules)
 	o.SysVSegments = len(s.SysV)
-	o.DevShmFiles = len(s.DevShm)
+	for _, f := range s.DevShm {
+		if f.Kind == "" || f.Kind == "file" {
+			o.DevShmFiles++
+		} else {
+			o.DevShmSpecial++
+		}
+	}
 	o.Sockets = len(s.Sockets)
 	for _, seg := range s.SysV {
 		o.SysVBytes += seg.Size

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dahnutz/procsift/internal/model"
+	"github.com/dahnutz/procsift/internal/safeio"
 )
 
 // StartupBudget bounds how much of cron, systemd, and init is read.
@@ -95,7 +96,9 @@ func FindStartupMany(root string, paths []string) (map[string]StartupResult, []m
 				return errStop
 			}
 			budget.Files++
-			file, err := os.Open(path)
+			// Lstat said regular; open without following or blocking so a
+			// swap to a symlink or FIFO cannot redirect or hang the read.
+			file, _, err := safeio.OpenRegular(path)
 			if err != nil {
 				gaps = append(gaps, model.ReadIssue{Source: path, State: "denied", Detail: "startup file was not readable"})
 				return nil
@@ -265,7 +268,14 @@ func scanStartupFile(name, kind, path, base string, budget *StartupBudget) (exac
 	budget.Files++
 	fileBase := filepath.Base(name)
 	nameHit := fileBase == base || fileBase == base+".service" || fileBase == base+".timer" || fileBase == base+".sh"
-	f, err := os.Open(name)
+	// System unit directories hold symlinks to real units, so they are
+	// followed there. User unit directories are writable by their owner, so a
+	// symlink is refused. Either way a FIFO or device cannot block the scan.
+	open := safeio.OpenRegularFollow
+	if kind == "systemd-user" {
+		open = safeio.OpenRegular
+	}
+	f, _, err := open(name)
 	if err != nil {
 		if nameHit {
 			names = append(names, model.StartupRef{Kind: kind, File: name, Match: "name", Line: fileBase})

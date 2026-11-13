@@ -428,6 +428,22 @@ func ipcFindings(s *model.Snapshot) []model.Finding {
 		}
 	}
 	for _, f := range s.DevShm {
+		if f.Kind != "" && f.Kind != "file" {
+			ev := "kind " + f.Kind
+			if f.Target != "" {
+				ev += ", target " + f.Target
+			}
+			out = append(out, model.Finding{
+				Rule:     "IPC-DEVSHM-SPECIAL",
+				Severity: model.SevLow,
+				Category: "ipc",
+				Subject:  f.Name,
+				Summary:  fmt.Sprintf("/dev/shm/%s is a %s, not a regular file", f.Name, f.Kind),
+				Detail:   "POSIX shared memory uses regular files. A FIFO, socket, device or symlink here was listed but not opened. Some programs use /dev/shm as a scratch directory; a FIFO or symlink can also be an attempt to stall or redirect a scanner.",
+				Evidence: []string{ev},
+			})
+			continue
+		}
 		if f.Magic == "" && !f.Executable {
 			continue
 		}
