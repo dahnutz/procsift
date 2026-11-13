@@ -165,8 +165,11 @@ func pageFindings(p *model.Process) []model.Finding {
 	}}
 }
 
+// ethPAll is ETH_P_ALL from include/uapi/linux/if_ether.h.
+const ethPAll = 0x0003
+
 func socketTableFindings(s *model.Snapshot) []model.Finding {
-	var raw, meta []model.Finding
+	var raw, rawMedium, meta []model.Finding
 	for _, sock := range s.Sockets {
 		owner, owned := s.SocketOwner[sock.Inode]
 		who := "unowned"
@@ -190,13 +193,34 @@ func socketTableFindings(s *model.Snapshot) []model.Finding {
 				Detail:   "A local sniffer can hold this socket. The finding names the owner when the descriptor census attributed it, and says unowned otherwise. Nothing was contacted.",
 				Evidence: []string{line},
 			}
+			allProto := sock.Proto == "packet" && sock.EtherProto == ethPAll
+			if allProto {
+				scope := "interface " + itoa(sock.Ifindex)
+				if sock.Ifindex == 0 {
+					scope = "all interfaces"
+				}
+				f.Evidence = append(f.Evidence, "captures all protocols (ETH_P_ALL) on "+scope)
+			}
+			if !owned && (s.NetIncomplete || s.Focused) {
+				f.Evidence = append(f.Evidence, "owner unknown: the descriptor census did not cover every process")
+			} else if !owned && allProto {
+				// Every visible process's descriptors were read and none holds
+				// this inode. That is what a hidden listener looks like.
+				f.Severity = model.SevMedium
+				f.Summary = "packet socket capturing all protocols has no visible owner"
+				f.Detail = "The socket receives every frame type, and no process in the complete descriptor census holds it. Packet-filter backdoors listen this way. A process that exited during the scan, a descriptor passed between processes, or a socket held only by the kernel can also explain it. Nothing was contacted."
+			}
 			if proc != nil {
 				f.PID = proc.PID
 				f.Process = proc.Name
 			} else {
 				f.Subject = who
 			}
-			raw = append(raw, f)
+			if f.Severity == model.SevMedium {
+				rawMedium = append(rawMedium, f)
+			} else {
+				raw = append(raw, f)
+			}
 		}
 		if strings.Contains(sock.Remote, "169.254.169.254") {
 			f := model.Finding{
@@ -214,6 +238,7 @@ func socketTableFindings(s *model.Snapshot) []model.Finding {
 			meta = append(meta, f)
 		}
 	}
+	// The row cap applies to low rows only, so it can never hide a medium one.
 	if len(raw) > 8 {
 		raw = append(raw[:8], model.Finding{
 			Rule: "NET-RAW-SOCKET", Severity: model.SevLow, Category: "network",
@@ -221,7 +246,7 @@ func socketTableFindings(s *model.Snapshot) []model.Finding {
 			Detail:  "The inventory stopped after 8 rows.",
 		})
 	}
-	return append(raw, meta...)
+	return append(append(rawMedium, raw...), meta...)
 }
 
 func isInterpreter(p *model.Process) bool {

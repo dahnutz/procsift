@@ -46,3 +46,31 @@ func TestTextReportContainsFinding(t *testing.T) {
 		t.Fatal(rep.Counts)
 	}
 }
+
+func TestTextReportEscapesTerminalControls(t *testing.T) {
+	snap := &model.Snapshot{Hostname: "fixture", Started: time.Unix(1700000000, 0).UTC()}
+	findings := []model.Finding{{
+		Rule: "PROC-DELETED-EXE", Severity: model.SevHigh, Category: "process",
+		PID: 42, Process: "\x1b[2Jfake", Summary: "executable was deleted",
+		Evidence: []string{"exe /tmp/a\x07b\x7f", "csi \u009b31m", "café 漢字"},
+	}}
+	rep := Build(snap, findings, Options{Version: "0.1.0", MinSeverity: model.SevLow})
+	var b strings.Builder
+	if err := Write(&b, rep, "text"); err != nil {
+		t.Fatal(err)
+	}
+	text := b.String()
+	for _, bad := range []string{"\x1b", "\x07", "\x7f", "\u009b"} {
+		if strings.Contains(text, bad) {
+			t.Fatalf("raw control %q in text output", bad)
+		}
+	}
+	for _, want := range []string{`\x1b[2Jfake`, `/tmp/a\x07b\x7f`, `csi \u009b31m`, "café 漢字"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q\n%s", want, text)
+		}
+	}
+	if strings.Count(text, "\n") < 10 {
+		t.Fatal("report layout newlines were escaped")
+	}
+}

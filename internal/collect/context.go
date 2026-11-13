@@ -18,6 +18,7 @@ import (
 	"github.com/dahnutz/procsift/internal/explain"
 	"github.com/dahnutz/procsift/internal/model"
 	"github.com/dahnutz/procsift/internal/procfs"
+	"github.com/dahnutz/procsift/internal/safeio"
 )
 
 const maxExeHash = 4 << 20
@@ -62,11 +63,12 @@ func (c *collector) enrichContext() {
 	}
 	manifests, manOK, manTrunc := explain.FindManifests(c.hostRoot, pkgPaths)
 	if c.manifest != "" {
-		local, err := explain.LoadTrustManifest(c.manifest)
+		local, digest, err := loadManifest(c.manifest)
 		if err != nil {
 			c.snap.Limits = append(c.snap.Limits, "Local supplied manifest was not applied: "+err.Error())
 		} else {
 			c.trusted = local
+			c.snap.ManifestSHA256 = digest
 			for path, sum := range local {
 				manifests[path] = sum
 			}
@@ -428,8 +430,22 @@ func tempPath(path string) bool {
 	return false
 }
 
+// loadManifest opens the operator's -manifest file. A symlink is followed
+// because the operator chose the path, but a FIFO or device there must not
+// block the scan or be parsed.
+func loadManifest(path string) (map[string]string, string, error) {
+	f, _, err := safeio.OpenRegularFollow(path)
+	if err != nil {
+		return nil, "", err
+	}
+	defer f.Close()
+	return explain.ReadTrustManifest(f)
+}
+
+// hashFile reads /proc/<pid>/exe, a magic link that has to be followed.
+// The open still refuses to block or to read anything but a regular file.
 func hashFile(path string, max int) (sum string, n int64, state string, err error) {
-	f, err := os.Open(path)
+	f, _, err := safeio.OpenRegularFollow(path)
 	if err != nil {
 		return "", 0, hashStateFor(err), err
 	}

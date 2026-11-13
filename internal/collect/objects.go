@@ -4,15 +4,14 @@ package collect
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
-	"syscall"
 
 	"github.com/dahnutz/procsift/internal/model"
 	"github.com/dahnutz/procsift/internal/procfs"
+	"github.com/dahnutz/procsift/internal/safeio"
 )
 
 func (c *collector) loadObjects() {
@@ -108,7 +107,13 @@ func readDevShm(dir string) ([]model.DevShmFile, []model.ReadIssue, error) {
 			issues = append(issues, model.ReadIssue{Source: path, State: readState(err), Detail: err.Error()})
 		}
 		if opened == nil {
-			continue
+			if errors.Is(err, safeio.ErrNotRegular) {
+				continue
+			}
+			// The file could not be opened (for example, another user's file
+			// without root). Keep the directory metadata so the mode bits still
+			// reach the analyzer; only the magic is unknown.
+			opened = info
 		}
 		out = append(out, model.DevShmFile{
 			Name:       e.Name(),
@@ -121,19 +126,11 @@ func readDevShm(dir string) ([]model.DevShmFile, []model.ReadIssue, error) {
 }
 
 func inspectDevShm(path string) (os.FileInfo, string, error) {
-	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	f, info, err := safeio.OpenRegular(path)
 	if err != nil {
 		return nil, "", err
 	}
-	f := os.NewFile(uintptr(fd), path)
 	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, "", err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, "", fmt.Errorf("entry was not regular after opening")
-	}
 	buf := make([]byte, 4)
 	n, err := f.Read(buf)
 	if errors.Is(err, io.EOF) {

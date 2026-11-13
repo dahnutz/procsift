@@ -3,7 +3,6 @@
 package main
 
 import (
-	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
@@ -70,7 +69,6 @@ func runScan(args []string) int {
 		PID: opt.onlyPID, All: opt.all, Deep: opt.deep, ReadMagic: !opt.noMagic,
 		Manifest: opt.manifest, Sweep: opt.sweep && !opt.noSweep, PIDMax: opt.pidMax,
 	}
-	manifestBefore := manifestFingerprint(opt.manifest)
 	if scope.Sweep {
 		scope.SweepMaxProbes = opt.sweepMaxProbes
 		scope.SweepTimeout = opt.sweepTimeout.String()
@@ -90,9 +88,9 @@ func runScan(args []string) int {
 		fmt.Fprintf(os.Stderr, "procsift: %s\n", err)
 		return 2
 	}
-	if manifestBefore != "" && manifestBefore == manifestFingerprint(opt.manifest) {
-		scope.ManifestSHA256 = manifestBefore
-	}
+	// The digest comes from the same read that applied the manifest, so it
+	// names exactly the reference this scan used.
+	scope.ManifestSHA256 = snap.ManifestSHA256
 	findings := analyze.Analyze(snap)
 	shown := filter(findings, opt.minSeverity)
 	rep := report.Build(snap, shown, report.Options{
@@ -120,28 +118,6 @@ func runScan(args []string) int {
 		return 1
 	}
 	return 0
-}
-
-func manifestFingerprint(path string) string {
-	if path == "" {
-		return ""
-	}
-	const maxBytes = 16 << 20
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Size() > maxBytes {
-		return ""
-	}
-	b, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
-	if err != nil || len(b) > maxBytes {
-		return ""
-	}
-	sum := sha256.Sum256(b)
-	return fmt.Sprintf("%x", sum)
 }
 
 func runCapture(args []string) int {

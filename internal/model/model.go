@@ -67,8 +67,11 @@ type Snapshot struct {
 	SysV   []SysVShm
 	DevShm []DevShmFile
 
-	Sockets           []Socket
-	SocketOwner       map[uint64]int
+	Sockets     []Socket
+	SocketOwner map[uint64]int
+	// Focused is set for -pid scans. Only the focused process and its parents
+	// are in the descriptor census, so other sockets have no known owner.
+	Focused           bool
 	NetIncomplete     bool
 	NetOrphans        []Socket
 	Coverage          []ReadIssue
@@ -88,6 +91,10 @@ type Snapshot struct {
 
 	// ExtraUID0 lists uid 0 account names other than root. Password fields are never copied.
 	ExtraUID0 []string
+
+	// ManifestSHA256 identifies the -manifest bytes that were applied.
+	// It is empty when no manifest was supplied or it was not applied.
+	ManifestSHA256 string
 
 	PreloadPaths     []string
 	PreloadTruncated bool
@@ -338,6 +345,11 @@ type Socket struct {
 	StateID int
 	UID     int
 	Inode   uint64
+
+	// EtherProto and Ifindex are set for packet sockets only.
+	// EtherProto 0x0003 is ETH_P_ALL; Ifindex 0 means every interface.
+	EtherProto uint16
+	Ifindex    int
 }
 
 // Finding is one triage result. Rule names are stable identifiers.

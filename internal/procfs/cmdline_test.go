@@ -33,6 +33,12 @@ func TestRedactKeepsPortAndHidesAttachedSecrets(t *testing.T) {
 		{"mysql -pHunter2", "mysql -p[redacted]"},
 		{"mysql -p12345", "mysql -p[redacted]"},
 		{"nc -l -p4444", "nc -l -p4444"},
+		{"sshpass -p hunter2 ssh host", "sshpass -p [redacted] ssh host"},
+		{"/usr/bin/sshpass -phunter2 ssh host", "/usr/bin/sshpass -p[redacted] ssh host"},
+		{"mysqldump -pS3cret db", "mysqldump -p[redacted] db"},
+		{"find / -print", "find / -print"},
+		{"gcc -pthread x.c", "gcc -pthread x.c"},
+		{"ssh -p 2222 host", "ssh -p 2222 host"},
 		{"curl https://user:pw@host/path", "curl https://[redacted]@host/path"},
 		{"curl -H Authorization:Bearer secret https://host", "curl -H Authorization:[redacted] [redacted] https://host"},
 	} {

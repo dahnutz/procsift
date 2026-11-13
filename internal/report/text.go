@@ -141,8 +141,43 @@ func writeText(w io.Writer, rep model.Report) error {
 			fmt.Fprintf(&b, "  - %s\n", n)
 		}
 	}
-	_, err := io.WriteString(w, b.String())
+	_, err := io.WriteString(w, escapeControls(b.String()))
 	return err
+}
+
+// escapeControls makes the text report safe to print on a terminal. Process
+// names, paths, command lines and other values come from the inspected host
+// and can carry escape sequences that clear the screen or rewrite earlier
+// lines. C0 controls, DEL and C1 controls are shown as escapes. Newlines are
+// kept because the report's own layout uses them. JSON output is already safe.
+func escapeControls(s string) string {
+	clean := true
+	for _, r := range s {
+		if needsEscape(r) {
+			clean = false
+			break
+		}
+	}
+	if clean {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s) + 16)
+	for _, r := range s {
+		switch {
+		case !needsEscape(r):
+			b.WriteRune(r)
+		case r < 0x80:
+			fmt.Fprintf(&b, "\\x%02x", r)
+		default:
+			fmt.Fprintf(&b, "\\u%04x", r)
+		}
+	}
+	return b.String()
+}
+
+func needsEscape(r rune) bool {
+	return (r < 0x20 && r != '\n') || r == 0x7f || (r >= 0x80 && r <= 0x9f)
 }
 
 func writeSignals(b *strings.Builder, rep model.Report) {
