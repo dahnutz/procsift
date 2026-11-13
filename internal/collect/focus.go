@@ -11,6 +11,7 @@ import (
 // discoverFocused reads one process and at most eight parents.
 // The rest of the host process list is not inventoried.
 func (c *collector) discoverFocused(pid int) error {
+	c.snap.Focused = true
 	c.snap.Limits = append(c.snap.Limits, fmt.Sprintf("Follow-up scan inventories pid %d and at most eight observed parents. Selected host file, socket, module, shared-memory, and host-signal checks still run; other processes were not inventoried.", pid))
 	seen := map[int]struct{}{}
 	cur := pid

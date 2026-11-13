@@ -52,6 +52,7 @@ func ParsePacket(text string) ([]model.Socket, int) {
 			Proto: "packet", Local: fmt.Sprintf("iface=%d", iface),
 			State: fmt.Sprintf("type=%d protocol=0x%04x", kind, protocol),
 			UID:   uid, Inode: inode,
+			EtherProto: uint16(protocol), Ifindex: iface,
 		})
 	}
 	return out, malformed
